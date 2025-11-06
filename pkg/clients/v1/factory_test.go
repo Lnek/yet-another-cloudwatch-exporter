@@ -1,9 +1,22 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package v1
 
 import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
@@ -11,11 +24,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/awstesting/mock"
 	"github.com/aws/aws-sdk-go/service/sts/stsiface"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 func cmpCache(t *testing.T, initialCache *CachingFactory, cache *CachingFactory) {
@@ -70,15 +84,21 @@ func TestNewClientCache(t *testing.T) {
 			"an empty config gives an empty cache",
 			model.JobsConfig{},
 			false,
-			&CachingFactory{logger: logging.NewNopLogger()},
+			&CachingFactory{
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
+			},
 		},
 		{
 			"if fips is set then the clients has fips",
 			model.JobsConfig{},
 			true,
 			&CachingFactory{
-				fips:   true,
-				logger: logging.NewNopLogger(),
+				fips:      true,
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
 			},
 		},
 		{
@@ -141,7 +161,9 @@ func TestNewClientCache(t *testing.T) {
 						"ap-northeast-3": &cachedClients{},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
 			},
 		},
 		{
@@ -227,7 +249,9 @@ func TestNewClientCache(t *testing.T) {
 						"ap-northeast-1": &cachedClients{onlyStatic: true},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
 			},
 		},
 		{
@@ -350,7 +374,9 @@ func TestNewClientCache(t *testing.T) {
 						"ap-northeast-3": &cachedClients{},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
 			},
 		},
 		{
@@ -439,7 +465,9 @@ func TestNewClientCache(t *testing.T) {
 						"ap-northeast-1": &cachedClients{onlyStatic: true},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
 			},
 		},
 	}
@@ -448,15 +476,15 @@ func TestNewClientCache(t *testing.T) {
 		test := l
 		t.Run(test.descrip, func(t *testing.T) {
 			t.Parallel()
-			cache := NewFactory(logging.NewNopLogger(), test.jobsCfg, test.fips)
+			cache := NewFactory(promslog.NewNopLogger(), test.jobsCfg, test.fips)
 			t.Logf("the cache is: %v", cache)
 
-			if test.cache.cleared != cache.cleared {
+			if test.cache.cleared.Load() != cache.cleared.Load() {
 				t.Logf("`cleared` not equal got %v, expected %v", cache.cleared, test.cache.cleared)
 				t.Fail()
 			}
 
-			if test.cache.refreshed != cache.refreshed {
+			if test.cache.refreshed.Load() != cache.refreshed.Load() {
 				t.Logf("`refreshed` not equal got %v, expected %v", cache.refreshed, test.cache.refreshed)
 				t.Fail()
 			}
@@ -485,7 +513,7 @@ func TestClear(t *testing.T) {
 			"a new clear clears all clients",
 			&CachingFactory{
 				session: mock.Session,
-				cleared: false,
+				cleared: atomic.NewBool(false),
 				mu:      sync.Mutex{},
 				stscache: map[model.Role]stsiface.STSAPI{
 					{}: nil,
@@ -493,20 +521,21 @@ func TestClear(t *testing.T) {
 				clients: map[model.Role]map[string]*cachedClients{
 					{}: {
 						"us-east-1": &cachedClients{
-							cloudwatch: createCloudWatchClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							tagging:    createTaggingClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							account:    createAccountClient(logging.NewNopLogger(), nil, nil),
+							cloudwatch: createCloudWatchClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							tagging:    createTaggingClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							account:    createAccountClient(promslog.NewNopLogger(), nil, nil),
 							onlyStatic: true,
 						},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
 			},
 		},
 		{
 			"A second call to clear does nothing",
 			&CachingFactory{
-				cleared: true,
+				cleared: atomic.NewBool(true),
 				mu:      sync.Mutex{},
 				session: mock.Session,
 				stscache: map[model.Role]stsiface.STSAPI{
@@ -521,7 +550,8 @@ func TestClear(t *testing.T) {
 						},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger:    promslog.NewNopLogger(),
+				refreshed: atomic.NewBool(false),
 			},
 		},
 	}
@@ -530,11 +560,11 @@ func TestClear(t *testing.T) {
 		test := l
 		t.Run(test.description, func(t *testing.T) {
 			test.cache.Clear()
-			if !test.cache.cleared {
+			if !test.cache.cleared.Load() {
 				t.Log("Cache cleared flag not set")
 				t.Fail()
 			}
-			if test.cache.refreshed {
+			if test.cache.refreshed.Load() {
 				t.Log("Cache cleared flag set")
 				t.Fail()
 			}
@@ -579,7 +609,8 @@ func TestRefresh(t *testing.T) {
 			"a new refresh creates clients",
 			&CachingFactory{
 				session:   mock.Session,
-				refreshed: false,
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
 				mu:        sync.Mutex{},
 				stscache: map[model.Role]stsiface.STSAPI{
 					{}: nil,
@@ -593,7 +624,7 @@ func TestRefresh(t *testing.T) {
 						},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger: promslog.NewNopLogger(),
 			},
 			false,
 		},
@@ -601,7 +632,8 @@ func TestRefresh(t *testing.T) {
 			"a new refresh with static only creates only cloudwatch",
 			&CachingFactory{
 				session:   mock.Session,
-				refreshed: false,
+				refreshed: atomic.NewBool(false),
+				cleared:   atomic.NewBool(false),
 				mu:        sync.Mutex{},
 				stscache: map[model.Role]stsiface.STSAPI{
 					{}: nil,
@@ -616,29 +648,30 @@ func TestRefresh(t *testing.T) {
 						},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger: promslog.NewNopLogger(),
 			},
 			true,
 		},
 		{
 			"A second call to refreshed does nothing",
 			&CachingFactory{
-				refreshed: true,
+				refreshed: atomic.NewBool(true),
+				cleared:   atomic.NewBool(false),
 				mu:        sync.Mutex{},
 				session:   mock.Session,
 				stscache: map[model.Role]stsiface.STSAPI{
-					{}: createStsSession(mock.Session, role, "", false, false),
+					{}: createStsSession(mock.Session, role, "", false, nil),
 				},
 				clients: map[model.Role]map[string]*cachedClients{
 					{}: {
 						"us-east-1": &cachedClients{
-							cloudwatch: createCloudWatchClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							tagging:    createTaggingClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							account:    createAccountClient(logging.NewNopLogger(), createStsSession(mock.Session, role, "", false, false), createIamSession(mock.Session, role, false, false)),
+							cloudwatch: createCloudWatchClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							tagging:    createTaggingClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							account:    createAccountClient(promslog.NewNopLogger(), createStsSession(mock.Session, role, "", false, nil), createIamSession(mock.Session, role, false, nil)),
 						},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger: promslog.NewNopLogger(),
 			},
 			false,
 		},
@@ -650,12 +683,12 @@ func TestRefresh(t *testing.T) {
 			t.Parallel()
 			test.cache.Refresh()
 
-			if !test.cache.refreshed {
+			if !test.cache.refreshed.Load() {
 				t.Log("Cache refreshed flag not set")
 				t.Fail()
 			}
 
-			if test.cache.cleared {
+			if test.cache.cleared.Load() {
 				t.Log("Cache cleared flag set")
 				t.Fail()
 			}
@@ -741,7 +774,7 @@ func testGetAWSClient(
 		{
 			"locks during unrefreshed parallel call",
 			&CachingFactory{
-				refreshed: false,
+				refreshed: atomic.NewBool(false),
 				mu:        sync.Mutex{},
 				session:   mock.Session,
 				stscache: map[model.Role]stsiface.STSAPI{
@@ -750,20 +783,20 @@ func testGetAWSClient(
 				clients: map[model.Role]map[string]*cachedClients{
 					{}: {
 						"us-east-1": &cachedClients{
-							cloudwatch: createCloudWatchClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							tagging:    createTaggingClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							account:    createAccountClient(logging.NewNopLogger(), createStsSession(mock.Session, role, "", false, false), createIamSession(mock.Session, role, false, false)),
+							cloudwatch: createCloudWatchClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							tagging:    createTaggingClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							account:    createAccountClient(promslog.NewNopLogger(), createStsSession(mock.Session, role, "", false, nil), createIamSession(mock.Session, role, false, nil)),
 						},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger: promslog.NewNopLogger(),
 			},
 			true,
 		},
 		{
 			"returns clients if available",
 			&CachingFactory{
-				refreshed: true,
+				refreshed: atomic.NewBool(true),
 				session:   mock.Session,
 				mu:        sync.Mutex{},
 				stscache: map[model.Role]stsiface.STSAPI{
@@ -772,20 +805,20 @@ func testGetAWSClient(
 				clients: map[model.Role]map[string]*cachedClients{
 					{}: {
 						"us-east-1": &cachedClients{
-							cloudwatch: createCloudWatchClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							tagging:    createTaggingClient(logging.NewNopLogger(), mock.Session, &region, role, false),
-							account:    createAccountClient(logging.NewNopLogger(), createStsSession(mock.Session, role, "", false, false), createIamSession(mock.Session, role, false, false)),
+							cloudwatch: createCloudWatchClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							tagging:    createTaggingClient(promslog.NewNopLogger(), mock.Session, &region, role, false),
+							account:    createAccountClient(promslog.NewNopLogger(), createStsSession(mock.Session, role, "", false, nil), createIamSession(mock.Session, role, false, nil)),
 						},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger: promslog.NewNopLogger(),
 			},
 			false,
 		},
 		{
 			"creates a new clients if not available",
 			&CachingFactory{
-				refreshed: true,
+				refreshed: atomic.NewBool(true),
 				session:   mock.Session,
 				mu:        sync.Mutex{},
 				stscache: map[model.Role]stsiface.STSAPI{
@@ -796,7 +829,7 @@ func testGetAWSClient(
 						"us-east-1": &cachedClients{},
 					},
 				},
-				logger: logging.NewNopLogger(),
+				logger: promslog.NewNopLogger(),
 			},
 			false,
 		},
@@ -913,7 +946,7 @@ func TestCreateAWSSession(t *testing.T) {
 	for _, l := range tests {
 		test := l
 		t.Run(test.descrip, func(t *testing.T) {
-			s := createAWSSession(endpoints.DefaultResolver().EndpointFor, false)
+			s := createAWSSession(endpoints.DefaultResolver().EndpointFor, nil)
 			if s == nil {
 				t.Fail()
 			}
@@ -966,7 +999,7 @@ func TestCreateStsSession(t *testing.T) {
 		t.Run(test.descrip, func(t *testing.T) {
 			t.Parallel()
 			// just exercise the code path
-			iface := createStsSession(mock.Session, test.role, test.stsRegion, false, false)
+			iface := createStsSession(mock.Session, test.role, test.stsRegion, false, nil)
 			if iface == nil {
 				t.Fail()
 			}
@@ -979,7 +1012,7 @@ func TestCreateCloudwatchSession(t *testing.T) {
 		t,
 		"Cloudwatch",
 		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createCloudwatchSession(s, region, role, fips, false)
+			iface := createCloudwatchSession(s, region, role, fips, nil)
 			if iface == nil {
 				t.Fail()
 			}
@@ -990,8 +1023,8 @@ func TestCreateTagSession(t *testing.T) {
 	testAWSClient(
 		t,
 		"Tag",
-		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createTagSession(s, region, role, fips)
+		func(t *testing.T, s *session.Session, region *string, role model.Role, _ bool) {
+			iface := createTagSession(s, region, role, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1003,7 +1036,7 @@ func TestCreateAPIGatewaySession(t *testing.T) {
 		t,
 		"APIGateway",
 		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createAPIGatewaySession(s, region, role, fips, false)
+			iface := createAPIGatewaySession(s, region, role, fips, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1015,7 +1048,7 @@ func TestCreateAPIGatewayV2Session(t *testing.T) {
 		t,
 		"APIGatewayV2",
 		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createAPIGatewayV2Session(s, region, role, fips, false)
+			iface := createAPIGatewayV2Session(s, region, role, fips, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1026,8 +1059,8 @@ func TestCreateASGSession(t *testing.T) {
 	testAWSClient(
 		t,
 		"ASG",
-		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createASGSession(s, region, role, fips)
+		func(t *testing.T, s *session.Session, region *string, role model.Role, _ bool) {
+			iface := createASGSession(s, region, role, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1039,7 +1072,7 @@ func TestCreateEC2Session(t *testing.T) {
 		t,
 		"EC2",
 		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createEC2Session(s, region, role, fips, false)
+			iface := createEC2Session(s, region, role, fips, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1051,7 +1084,7 @@ func TestCreatePrometheusSession(t *testing.T) {
 		t,
 		"Prometheus",
 		func(t *testing.T, s *session.Session, region *string, role model.Role, _ bool) {
-			iface := createPrometheusSession(s, region, role, false)
+			iface := createPrometheusSession(s, region, role, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1063,7 +1096,7 @@ func TestCreateDMSSession(t *testing.T) {
 		t,
 		"DMS",
 		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createDMSSession(s, region, role, fips, false)
+			iface := createDMSSession(s, region, role, fips, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1075,7 +1108,7 @@ func TestCreateStorageGatewaySession(t *testing.T) {
 		t,
 		"StorageGateway",
 		func(t *testing.T, s *session.Session, region *string, role model.Role, fips bool) {
-			iface := createStorageGatewaySession(s, region, role, fips, false)
+			iface := createStorageGatewaySession(s, region, role, fips, promslog.NewNopLogger())
 			if iface == nil {
 				t.Fail()
 			}
@@ -1128,13 +1161,52 @@ func TestSTSResolvesFIPSEnabledEndpoints(t *testing.T) {
 
 			mockSession.Config.Endpoint = nil
 
-			sess := createStsSession(mock.Session, model.Role{}, tc.region, true, false)
+			sess := createStsSession(mock.Session, model.Role{}, tc.region, true, promslog.NewNopLogger())
 			require.NotNil(t, sess)
 
 			require.True(t, called, "expected endpoint resolver to be called")
 			require.NoError(t, resolverError, "no error expected when resolving endpoint")
 			require.Equal(t, tc.expectedEndpoint, resolvedEndpoint.URL)
 		})
+	}
+}
+
+func TestRaceConditionRefreshClear(t *testing.T) {
+	t.Parallel()
+
+	// Create a factory with the test config
+	factory := NewFactory(promslog.NewNopLogger(), model.JobsConfig{}, false)
+
+	// Number of concurrent operations to perform
+	iterations := 100
+
+	// Use WaitGroup to synchronize goroutines
+	var wg sync.WaitGroup
+	wg.Add(iterations) // For both Refresh and Clear calls
+
+	// Start function to run concurrent operations
+	for i := 0; i < iterations; i++ {
+		// Launch goroutine to call Refresh
+		go func() {
+			defer wg.Done()
+			factory.Refresh()
+			factory.Clear()
+		}()
+	}
+
+	// Create a channel to signal completion
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case <-done:
+		// Test completed successfully
+	case <-time.After(60 * time.Second):
+		require.Fail(t, "Test timed out after 60 seconds")
 	}
 }
 

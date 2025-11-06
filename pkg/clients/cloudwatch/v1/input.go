@@ -1,6 +1,19 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package v1
 
 import (
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -8,9 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/promutil"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/promutil"
 )
 
 func toCloudWatchDimensions(dimensions []model.Dimension) []*cloudwatch.Dimension {
@@ -26,7 +38,7 @@ func toCloudWatchDimensions(dimensions []model.Dimension) []*cloudwatch.Dimensio
 	return cwDim
 }
 
-func createGetMetricStatisticsInput(dimensions []model.Dimension, namespace *string, metric *model.MetricConfig, logger logging.Logger) *cloudwatch.GetMetricStatisticsInput {
+func createGetMetricStatisticsInput(dimensions []model.Dimension, namespace *string, metric *model.MetricConfig, logger *slog.Logger) *cloudwatch.GetMetricStatisticsInput {
 	period := metric.Period
 	length := metric.Length
 	delay := metric.Delay
@@ -54,17 +66,15 @@ func createGetMetricStatisticsInput(dimensions []model.Dimension, namespace *str
 		ExtendedStatistics: extendedStatistics,
 	}
 
-	if logger.IsDebugEnabled() {
-		logger.Debug("CLI helper - " +
-			"aws cloudwatch get-metric-statistics" +
-			" --metric-name " + metric.Name +
-			" --dimensions " + dimensionsToCliString(dimensions) +
-			" --namespace " + *namespace +
-			" --statistics " + *statistics[0] +
-			" --period " + strconv.FormatInt(period, 10) +
-			" --start-time " + startTime.Format(time.RFC3339) +
-			" --end-time " + endTime.Format(time.RFC3339))
-	}
+	logger.Debug("CLI helper - " +
+		"aws cloudwatch get-metric-statistics" +
+		" --metric-name " + metric.Name +
+		" --dimensions " + dimensionsToCliString(dimensions) +
+		" --namespace " + *namespace +
+		" --statistics " + *statistics[0] +
+		" --period " + strconv.FormatInt(period, 10) +
+		" --start-time " + startTime.Format(time.RFC3339) +
+		" --end-time " + endTime.Format(time.RFC3339))
 
 	return output
 }

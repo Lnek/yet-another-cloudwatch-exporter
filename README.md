@@ -1,8 +1,16 @@
 # YACE - yet another cloudwatch exporter
 
+[![Container on Quay](https://quay.io/repository/prometheuscommunity/yet-another-cloudwatch-exporter/status)][quay]
+[![Container on Docker Hub](https://img.shields.io/docker/pulls/prometheuscommunity/yet-another-cloudwatch-exporter.svg?maxAge=604800)][docker]
+
 YACE, or `yet another cloudwatch exporter`, is a [Prometheus exporter](https://prometheus.io/docs/instrumenting/exporters/#exporters-and-integrations) for [AWS CloudWatch](http://aws.amazon.com/cloudwatch/) metrics. It is written in Go and uses the official AWS SDK.
 
-The project was originally created by Thomas Peitz while working at InVision.de, then later moved outside of the company repo. Read the full rebranding story [here](https://medium.com/@IT_Supertramp/reorganizing-yace-79d7149b9584).
+## News
+
+As of November 2024, YACE is part of [prometheus-community](https://github.com/prometheus-community). Read more about it in these announcement posts:
+
+* https://prometheus.io/blog/2024/11/19/yace-joining-prometheus-community/
+* https://grafana.com/blog/2024/11/19/yace-moves-to-prometheus-community/
 
 ## Alternatives
 
@@ -63,6 +71,7 @@ Only the latest version gets security updates. We won't support older versions.
   * `AWS/Cognito` - Cognito
   * `AWS/DataSync` - DataSync
   * `AWS/DDoSProtection` - Distributed Denial of Service (DDoS) protection service
+  * `AWS/DirectoryService` - Directory Services (MicrosoftAD)
   * `AWS/DMS` - Database Migration Service
   * `AWS/DocDB` - DocumentDB (with MongoDB compatibility)
   * `AWS/DX` - Direct Connect
@@ -105,6 +114,7 @@ Only the latest version gets security updates. We won't support older versions.
   * `AWS/Neptune` - Neptune
   * `AWS/NetworkELB` - Network Load Balancer
   * `AWS/NetworkFirewall` - Network Firewall
+  * `AWS/Network Manager` - Network Manager
   * `AWS/PrivateLinkEndpoints` - VPC Endpoint
   * `AWS/PrivateLinkServices` - VPC Endpoint Service
   * `AWS/Prometheus` - Managed Service for Prometheus
@@ -112,6 +122,7 @@ Only the latest version gets security updates. We won't support older versions.
   * `AWS/QuickSight` - QuickSight (Business Intelligence)
   * `AWS/RDS` - Relational Database Service
   * `AWS/Redshift` - Redshift Database
+  * `AWS/Redshift-Serverless` - Redshift Serverless
   * `AWS/Route53` - Route53 Health Checks
   * `AWS/Route53Resolver` - Route53 Resolver
   * `AWS/RUM` - Real User Monitoring
@@ -287,7 +298,7 @@ predict_linear(aws_es_free_storage_space_minimum[2d], 86400 * 7) + on (name) gro
 to support local testing all AWS urls can be overridden with by setting an environment variable `AWS_ENDPOINT_URL`
 ```shell
 docker run -d --rm -v $PWD/credentials:/exporter/.aws/credentials -v $PWD/config.yml:/tmp/config.yml \
--e AWS_ENDPOINT_URL=http://localhost:4766 -p 5000:5000 --name yace ghcr.io/nerdswords/yet-another-cloudwatch-exporter:vx.xx.x # release version as tag - Do not forget the version 'v'
+-e AWS_ENDPOINT_URL=http://localhost:4766 -p 5000:5000 --name yace quay.io/prometheuscommunity/yet-another-cloudwatch-exporter:latest
 ```
 
 ## Options
@@ -359,3 +370,6 @@ go without losing data. ELB metrics on AWS are written every 5 minutes (300) in 
 
 * [Justin Santa Barbara](https://github.com/justinsb) - For telling me about AWS tags api which simplified a lot - Thanks!
 * [Brian Brazil](https://github.com/brian-brazil) - Who gave a lot of feedback regarding UX and prometheus lib - Thanks!
+
+[quay]: https://quay.io/repository/prometheuscommunity/yet-another-cloudwatch-exporter
+[docker]: https://hub.docker.com/r/prometheuscommunity/yet-another-cloudwatch-exporter

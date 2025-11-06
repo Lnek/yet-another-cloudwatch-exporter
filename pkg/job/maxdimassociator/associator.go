@@ -1,16 +1,29 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package maxdimassociator
 
 import (
 	"cmp"
+	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
 	"github.com/grafana/regexp"
 	prom_model "github.com/prometheus/common/model"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 var amazonMQBrokerSuffix = regexp.MustCompile("-[0-9]+$")
@@ -24,7 +37,8 @@ type Associator struct {
 	// mappings is a slice of dimensions-based mappings, one for each regex of a given namespace
 	mappings []*dimensionsRegexpMapping
 
-	logger logging.Logger
+	logger       *slog.Logger
+	debugEnabled bool
 }
 
 type dimensionsRegexpMapping struct {
@@ -56,10 +70,11 @@ func (rm dimensionsRegexpMapping) toString() string {
 }
 
 // NewAssociator builds all mappings for the given dimensions regexps and list of resources.
-func NewAssociator(logger logging.Logger, dimensionsRegexps []model.DimensionsRegexp, resources []*model.TaggedResource) Associator {
+func NewAssociator(logger *slog.Logger, dimensionsRegexps []model.DimensionsRegexp, resources []*model.TaggedResource) Associator {
 	assoc := Associator{
-		mappings: []*dimensionsRegexpMapping{},
-		logger:   logger,
+		mappings:     []*dimensionsRegexpMapping{},
+		logger:       logger,
+		debugEnabled: logger.Handler().Enabled(context.Background(), slog.LevelDebug), // caching if debug is enabled
 	}
 
 	// Keep track of resources that have already been mapped.
@@ -102,7 +117,7 @@ func NewAssociator(logger logging.Logger, dimensionsRegexps []model.DimensionsRe
 		// example when we define multiple regexps (to capture sibling
 		// or sub-resources) and one of them doesn't match any resource.
 		// This behaviour is ok, we just want to debug log to keep track of it.
-		if logger.IsDebugEnabled() {
+		if assoc.debugEnabled {
 			logger.Debug("unable to define a regex mapping", "regex", dr.Regexp.String())
 		}
 	}
@@ -114,7 +129,7 @@ func NewAssociator(logger logging.Logger, dimensionsRegexps []model.DimensionsRe
 		return -1 * cmp.Compare(len(a.dimensions), len(b.dimensions))
 	})
 
-	if logger.IsDebugEnabled() {
+	if assoc.debugEnabled {
 		for idx, regexpMapping := range assoc.mappings {
 			logger.Debug("associator mapping", "mapping_idx", idx, "mapping", regexpMapping.toString())
 		}
@@ -142,7 +157,7 @@ func (assoc Associator) AssociateMetricToResource(cwMetric *model.Metric) (*mode
 		dimensions = append(dimensions, dimension.Name)
 	}
 
-	if logger.IsDebugEnabled() {
+	if assoc.debugEnabled {
 		logger.Debug("associate loop start", "dimensions", strings.Join(dimensions, ","))
 	}
 
@@ -153,27 +168,45 @@ func (assoc Associator) AssociateMetricToResource(cwMetric *model.Metric) (*mode
 	mappingFound := false
 	for idx, regexpMapping := range assoc.mappings {
 		if containsAll(dimensions, regexpMapping.dimensions) {
-			if logger.IsDebugEnabled() {
+			if assoc.debugEnabled {
 				logger.Debug("found mapping", "mapping_idx", idx, "mapping", regexpMapping.toString())
 			}
 
 			// A regex mapping has been found. The metric has all (and possibly more)
 			// the dimensions computed for the mapping. Now compute a signature
-			// of the labels (names and values) of the dimensions of this mapping.
+			// of the labels (names and values) of the dimensions of this mapping, and try to
+			// find a resource match.
+			// This loop can run up to two times:
+			//   On the first iteration, special-case dimension value
+			// fixes to match the value up with the resource ARN are applied to particular namespaces.
+			// 	  The second iteration will only run if a fix was applied for one of the special-case
+			// namespaces and no match was found. It will try to find a match without applying the fixes.
+			// This covers cases where the dimension value does line up with the resource ARN.
 			mappingFound = true
-			labels := buildLabelsMap(cwMetric, regexpMapping)
-			signature := prom_model.LabelsToSignature(labels)
+			dimFixApplied := false
+			shouldTryFixDimension := true
+			// If no dimension fixes were applied, no need to try running again without the fixer.
+			for dimFixApplied || shouldTryFixDimension {
 
-			// Check if there's an entry for the labels (names and values) of the metric,
-			// and return the resource in case.
-			if resource, ok := regexpMapping.dimensionsMapping[signature]; ok {
-				logger.Debug("resource matched", "signature", signature)
-				return resource, false
+				var labels map[string]string
+				labels, dimFixApplied = buildLabelsMap(cwMetric, regexpMapping, shouldTryFixDimension)
+				signature := prom_model.LabelsToSignature(labels)
+
+				// Check if there's an entry for the labels (names and values) of the metric,
+				// and return the resource in case.
+				if resource, ok := regexpMapping.dimensionsMapping[signature]; ok {
+					logger.Debug("resource matched", "signature", signature)
+					return resource, false
+				}
+
+				// No resource was matched for the current signature.
+				logger.Debug("resource signature attempt not matched", "signature", signature)
+				shouldTryFixDimension = false
 			}
 
-			// Otherwise, continue iterating across the rest of regex mappings
-			// to attempt to find another one with fewer dimensions.
-			logger.Debug("resource not matched", "signature", signature)
+			// No resource was matched for any signature, continue iterating across the
+			// rest of regex mappings to attempt to find another one with fewer dimensions.
+			logger.Debug("resource not matched")
 		}
 	}
 
@@ -189,38 +222,48 @@ func (assoc Associator) AssociateMetricToResource(cwMetric *model.Metric) (*mode
 	return nil, mappingFound
 }
 
-// buildLabelsMap returns a map of labels names and values.
+// buildLabelsMap returns a map of labels names and values, as well as whether the dimension fixer was applied.
 // For some namespaces, values might need to be modified in order
 // to match the dimension value extracted from ARN.
-func buildLabelsMap(cwMetric *model.Metric, regexpMapping *dimensionsRegexpMapping) map[string]string {
+func buildLabelsMap(cwMetric *model.Metric, regexpMapping *dimensionsRegexpMapping, shouldTryFixDimension bool) (map[string]string, bool) {
 	labels := make(map[string]string, len(cwMetric.Dimensions))
+	dimFixApplied := false
 	for _, rDimension := range regexpMapping.dimensions {
 		for _, mDimension := range cwMetric.Dimensions {
-			name := mDimension.Name
-			value := mDimension.Value
-
-			// AmazonMQ is special - for active/standby ActiveMQ brokers,
-			// the value of the "Broker" dimension contains a number suffix
-			// that is not part of the resource ARN
-			if cwMetric.Namespace == "AWS/AmazonMQ" && name == "Broker" {
-				if amazonMQBrokerSuffix.MatchString(value) {
-					value = amazonMQBrokerSuffix.ReplaceAllString(value, "")
-				}
-			}
-
-			// AWS Sagemaker endpoint name may have upper case characters
-			// Resource ARN is only in lower case, hence transforming
-			// endpoint name value to be able to match the resource ARN
-			if cwMetric.Namespace == "AWS/SageMaker" && name == "EndpointName" {
-				value = strings.ToLower(value)
+			if shouldTryFixDimension {
+				mDimension, dimFixApplied = fixDimension(cwMetric.Namespace, mDimension)
 			}
 
 			if rDimension == mDimension.Name {
-				labels[name] = value
+				labels[mDimension.Name] = mDimension.Value
 			}
 		}
 	}
-	return labels
+	return labels, dimFixApplied
+}
+
+// fixDimension modifies the dimension value to accommodate special cases where
+// the dimension value doesn't match the resource ARN.
+func fixDimension(namespace string, dim model.Dimension) (model.Dimension, bool) {
+	// AmazonMQ is special - for active/standby ActiveMQ brokers,
+	// the value of the "Broker" dimension contains a number suffix
+	// that is not part of the resource ARN
+	if namespace == "AWS/AmazonMQ" && dim.Name == "Broker" {
+		if amazonMQBrokerSuffix.MatchString(dim.Value) {
+			dim.Value = amazonMQBrokerSuffix.ReplaceAllString(dim.Value, "")
+			return dim, true
+		}
+	}
+
+	// AWS Sagemaker endpoint name and inference component name may have upper case characters
+	// Resource ARN is only in lower case, hence transforming
+	// name value to be able to match the resource ARN
+	if namespace == "AWS/SageMaker" && (dim.Name == "EndpointName" || dim.Name == "InferenceComponentName") {
+		dim.Value = strings.ToLower(dim.Value)
+		return dim, true
+	}
+
+	return dim, false
 }
 
 // containsAll returns true if a contains all elements of b

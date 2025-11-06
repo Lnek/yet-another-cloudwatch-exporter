@@ -1,20 +1,32 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package job
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/config"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/job/getmetricdata"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/config"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/job/getmetricdata"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 func ScrapeAwsData(
 	ctx context.Context,
-	logger logging.Logger,
+	logger *slog.Logger,
 	jobsCfg model.JobsConfig,
 	factory clients.Factory,
 	metricsPerQuery int,
@@ -32,10 +44,10 @@ func ScrapeAwsData(
 				wg.Add(1)
 				go func(discoveryJob model.DiscoveryJob, region string, role model.Role) {
 					defer wg.Done()
-					jobLogger := logger.With("job_type", discoveryJob.Type, "region", region, "arn", role.RoleArn)
+					jobLogger := logger.With("namespace", discoveryJob.Namespace, "region", region, "arn", role.RoleArn)
 					accountID, err := factory.GetAccountClient(region, role).GetAccount(ctx)
 					if err != nil {
-						jobLogger.Error(err, "Couldn't get account Id")
+						jobLogger.Error("Couldn't get account Id", "err", err)
 						return
 					}
 					jobLogger = jobLogger.With("account", accountID)
@@ -89,7 +101,7 @@ func ScrapeAwsData(
 					jobLogger := logger.With("static_job_name", staticJob.Name, "region", region, "arn", role.RoleArn)
 					accountID, err := factory.GetAccountClient(region, role).GetAccount(ctx)
 					if err != nil {
-						jobLogger.Error(err, "Couldn't get account Id")
+						jobLogger.Error("Couldn't get account Id", "err", err)
 						return
 					}
 					jobLogger = jobLogger.With("account", accountID)
@@ -126,7 +138,7 @@ func ScrapeAwsData(
 					jobLogger := logger.With("custom_metric_namespace", customNamespaceJob.Namespace, "region", region, "arn", role.RoleArn)
 					accountID, err := factory.GetAccountClient(region, role).GetAccount(ctx)
 					if err != nil {
-						jobLogger.Error(err, "Couldn't get account Id")
+						jobLogger.Error("Couldn't get account Id", "err", err)
 						return
 					}
 					jobLogger = jobLogger.With("account", accountID)

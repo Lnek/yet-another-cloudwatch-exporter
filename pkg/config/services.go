@@ -1,3 +1,15 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package config
 
 import (
@@ -6,7 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/grafana/regexp"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 // ServiceConfig defines a namespace supported by discovery jobs.
@@ -199,6 +211,10 @@ var SupportedServices = serviceConfigs{
 		ResourceFilters: []*string{
 			aws.String("elasticbeanstalk:environment"),
 		},
+		DimensionRegexps: []*regexp.Regexp{
+			// arn uses /${ApplicationName}/${EnvironmentName}, but only EnvironmentName is a Metric Dimension
+			regexp.MustCompile("environment/[^/]+/(?P<EnvironmentName>[^/]+)"),
+		},
 	},
 	{
 		Namespace: "AWS/Billing",
@@ -209,6 +225,10 @@ var SupportedServices = serviceConfigs{
 		Alias:     "cassandra",
 		ResourceFilters: []*string{
 			aws.String("cassandra"),
+		},
+		DimensionRegexps: []*regexp.Regexp{
+			regexp.MustCompile("keyspace/(?P<Keyspace>[^/]+)/table/(?P<TableName>[^/]+)"),
+			regexp.MustCompile("keyspace/(?P<Keyspace>[^/]+)/"),
 		},
 	},
 	{
@@ -241,6 +261,16 @@ var SupportedServices = serviceConfigs{
 		DimensionRegexps: []*regexp.Regexp{
 			regexp.MustCompile(":task/(?P<TaskId>[^/]+)"),
 			regexp.MustCompile(":agent/(?P<AgentId>[^/]+)"),
+		},
+	},
+	{
+		Namespace: "AWS/DirectoryService",
+		Alias:     "ds",
+		ResourceFilters: []*string{
+			aws.String("ds:directory"),
+		},
+		DimensionRegexps: []*regexp.Regexp{
+			regexp.MustCompile(":directory/(?P<Directory_ID>[^/]+)"),
 		},
 	},
 	{
@@ -398,6 +428,16 @@ var SupportedServices = serviceConfigs{
 		},
 		DimensionRegexps: []*regexp.Regexp{
 			regexp.MustCompile("file-system/(?P<FileSystemId>[^/]+)"),
+		},
+	},
+	{
+		Namespace: "AWS/EKS",
+		Alias:     "eks",
+		ResourceFilters: []*string{
+			aws.String("eks:cluster"),
+		},
+		DimensionRegexps: []*regexp.Regexp{
+			regexp.MustCompile(":cluster/(?P<ClusterName>[^/]+)$"),
 		},
 	},
 	{
@@ -614,6 +654,7 @@ var SupportedServices = serviceConfigs{
 		Alias:     "mediapackage",
 		ResourceFilters: []*string{
 			aws.String("mediapackage"),
+			aws.String("mediapackagev2"),
 			aws.String("mediapackage-vod"),
 		},
 		DimensionRegexps: []*regexp.Regexp{
@@ -729,10 +770,12 @@ var SupportedServices = serviceConfigs{
 		ResourceFilters: []*string{
 			aws.String("rds:db"),
 			aws.String("rds:cluster"),
+			aws.String("rds:db-proxy"),
 		},
 		DimensionRegexps: []*regexp.Regexp{
 			regexp.MustCompile(":cluster:(?P<DBClusterIdentifier>[^/]+)"),
 			regexp.MustCompile(":db:(?P<DBInstanceIdentifier>[^/]+)"),
+			regexp.MustCompile(":db-proxy:(?P<ProxyIdentifier>[^/]+)"),
 		},
 	},
 	{
@@ -743,6 +786,14 @@ var SupportedServices = serviceConfigs{
 		},
 		DimensionRegexps: []*regexp.Regexp{
 			regexp.MustCompile(":cluster:(?P<ClusterIdentifier>[^/]+)"),
+		},
+	},
+	{
+		Namespace: "AWS/Redshift-Serverless",
+		Alias:     "redshift",
+		ResourceFilters: []*string{
+			aws.String("redshift-serverless:workgroup"),
+			aws.String("redshift-serverless:namespace"),
 		},
 	},
 	{
@@ -842,6 +893,10 @@ var SupportedServices = serviceConfigs{
 		},
 	},
 	{
+		Namespace: "AWS/Transfer",
+		Alias:     "transfer",
+	},
+	{
 		Namespace: "AWS/TransitGateway",
 		Alias:     "tgw",
 		ResourceFilters: []*string{
@@ -913,9 +968,11 @@ var SupportedServices = serviceConfigs{
 		Alias:     "sagemaker",
 		ResourceFilters: []*string{
 			aws.String("sagemaker:endpoint"),
+			aws.String("sagemaker:inference-component"),
 		},
 		DimensionRegexps: []*regexp.Regexp{
 			regexp.MustCompile(":endpoint/(?P<EndpointName>[^/]+)$"),
+			regexp.MustCompile(":inference-component/(?P<InferenceComponentName>[^/]+)$"),
 		},
 	},
 	{
@@ -926,6 +983,16 @@ var SupportedServices = serviceConfigs{
 		},
 		DimensionRegexps: []*regexp.Regexp{
 			regexp.MustCompile(":endpoint/(?P<EndpointName>[^/]+)$"),
+		},
+	},
+	{
+		Namespace: "/aws/sagemaker/InferenceComponents",
+		Alias:     "sagemaker-inference-components",
+		ResourceFilters: []*string{
+			aws.String("sagemaker:inference-component"),
+		},
+		DimensionRegexps: []*regexp.Regexp{
+			regexp.MustCompile(":inference-component/(?P<InferenceComponentName>[^/]+)$"),
 		},
 	},
 	{
@@ -984,6 +1051,26 @@ var SupportedServices = serviceConfigs{
 		Alias:     "bedrock",
 	},
 	{
+		Namespace: "AWS/Bedrock/Agents",
+		Alias:     "bedrock-agents",
+		ResourceFilters: []*string{
+			aws.String("bedrock:agent-alias"),
+		},
+		DimensionRegexps: []*regexp.Regexp{
+			regexp.MustCompile("(?P<AgentAliasArn>.+)"),
+		},
+	},
+	{
+		Namespace: "AWS/Bedrock/Guardrails",
+		Alias:     "bedrock-guardrails",
+		ResourceFilters: []*string{
+			aws.String("bedrock:guardrail"),
+		},
+		DimensionRegexps: []*regexp.Regexp{
+			regexp.MustCompile("(?P<GuardrailArn>.+)"),
+		},
+	},
+	{
 		Namespace: "AWS/Events",
 		Alias:     "event-rule",
 		ResourceFilters: []*string{
@@ -1002,6 +1089,16 @@ var SupportedServices = serviceConfigs{
 		},
 		DimensionRegexps: []*regexp.Regexp{
 			regexp.MustCompile(":service/(?P<Service>[^/]+)$"),
+		},
+	},
+	{
+		Namespace: "AWS/Network Manager",
+		Alias:     "networkmanager",
+		ResourceFilters: []*string{
+			aws.String("networkmanager:core-network"),
+		},
+		DimensionRegexps: []*regexp.Regexp{
+			regexp.MustCompile(":core-network/(?P<CoreNetwork>[^/]+)$"),
 		},
 	},
 }

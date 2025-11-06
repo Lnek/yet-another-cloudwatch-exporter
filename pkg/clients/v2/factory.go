@@ -1,8 +1,21 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package v2
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -24,27 +37,27 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/storagegateway"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	aws_logging "github.com/aws/smithy-go/logging"
+	"go.uber.org/atomic"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/account"
-	account_v2 "github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/account/v2"
-	cloudwatch_client "github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
-	cloudwatch_v2 "github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch/v2"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/tagging"
-	tagging_v2 "github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/tagging/v2"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/account"
+	account_v2 "github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/account/v2"
+	cloudwatch_client "github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
+	cloudwatch_v2 "github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch/v2"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/tagging"
+	tagging_v2 "github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/tagging/v2"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 type awsRegion = string
 
 type CachingFactory struct {
-	logger              logging.Logger
+	logger              *slog.Logger
 	stsOptions          func(*sts.Options)
 	clients             map[model.Role]map[awsRegion]*cachedClients
 	mu                  sync.Mutex
-	refreshed           bool
-	cleared             bool
+	refreshed           *atomic.Bool
+	cleared             *atomic.Bool
 	fipsEnabled         bool
 	endpointURLOverride string
 }
@@ -64,17 +77,18 @@ type cachedClients struct {
 var _ clients.Factory = &CachingFactory{}
 
 // NewFactory creates a new client factory to use when fetching data from AWS with sdk v2
-func NewFactory(logger logging.Logger, jobsCfg model.JobsConfig, fips bool) (*CachingFactory, error) {
+func NewFactory(logger *slog.Logger, jobsCfg model.JobsConfig, fips bool) (*CachingFactory, error) {
 	var options []func(*aws_config.LoadOptions) error
 	options = append(options, aws_config.WithLogger(aws_logging.LoggerFunc(func(classification aws_logging.Classification, format string, v ...interface{}) {
-		if classification == aws_logging.Debug {
-			if logger.IsDebugEnabled() {
+		switch classification {
+		case aws_logging.Debug:
+			if logger.Enabled(context.Background(), slog.LevelDebug) {
 				logger.Debug(fmt.Sprintf(format, v...))
 			}
-		} else if classification == aws_logging.Warn {
+		case aws_logging.Warn:
 			logger.Warn(fmt.Sprintf(format, v...))
-		} else { // AWS logging only supports debug or warn, log everything else as error
-			logger.Error(fmt.Errorf("unexected aws error classification: %s", classification), fmt.Sprintf(format, v...))
+		default: // AWS logging only supports debug or warn, log everything else as error
+			logger.Error(fmt.Sprintf(format, v...), "err", "unexected aws error classification", "classification", classification)
 		}
 	})))
 
@@ -89,7 +103,7 @@ func NewFactory(logger logging.Logger, jobsCfg model.JobsConfig, fips bool) (*Ca
 		return nil, fmt.Errorf("failed to load default aws config: %w", err)
 	}
 
-	stsOptions := createStsOptions(jobsCfg.StsRegion, logger.IsDebugEnabled(), endpointURLOverride, fips)
+	stsOptions := createStsOptions(jobsCfg.StsRegion, logger.Enabled(context.Background(), slog.LevelDebug), endpointURLOverride, fips)
 	cache := map[model.Role]map[awsRegion]*cachedClients{}
 	for _, discoveryJob := range jobsCfg.DiscoveryJobs {
 		for _, role := range discoveryJob.Roles {
@@ -148,11 +162,13 @@ func NewFactory(logger logging.Logger, jobsCfg model.JobsConfig, fips bool) (*Ca
 		fipsEnabled:         fips,
 		stsOptions:          stsOptions,
 		endpointURLOverride: endpointURLOverride,
+		cleared:             atomic.NewBool(false),
+		refreshed:           atomic.NewBool(false),
 	}, nil
 }
 
 func (c *CachingFactory) GetCloudwatchClient(region string, role model.Role, concurrency cloudwatch_client.ConcurrencyConfig) cloudwatch_client.Client {
-	if !c.refreshed {
+	if !c.refreshed.Load() {
 		// if we have not refreshed then we need to lock in case we are accessing concurrently
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -165,7 +181,7 @@ func (c *CachingFactory) GetCloudwatchClient(region string, role model.Role, con
 }
 
 func (c *CachingFactory) GetTaggingClient(region string, role model.Role, concurrencyLimit int) tagging.Client {
-	if !c.refreshed {
+	if !c.refreshed.Load() {
 		// if we have not refreshed then we need to lock in case we are accessing concurrently
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -189,7 +205,7 @@ func (c *CachingFactory) GetTaggingClient(region string, role model.Role, concur
 }
 
 func (c *CachingFactory) GetAccountClient(region string, role model.Role) account.Client {
-	if !c.refreshed {
+	if !c.refreshed.Load() {
 		// if we have not refreshed then we need to lock in case we are accessing concurrently
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -205,13 +221,13 @@ func (c *CachingFactory) GetAccountClient(region string, role model.Role) accoun
 }
 
 func (c *CachingFactory) Refresh() {
-	if c.refreshed {
+	if c.refreshed.Load() {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Avoid double refresh in the event Refresh() is called concurrently
-	if c.refreshed {
+	if c.refreshed.Load() {
 		return
 	}
 
@@ -239,19 +255,19 @@ func (c *CachingFactory) Refresh() {
 		}
 	}
 
-	c.refreshed = true
-	c.cleared = false
+	c.refreshed.Store(true)
+	c.cleared.Store(false)
 }
 
 func (c *CachingFactory) Clear() {
-	if c.cleared {
+	if c.cleared.Load() {
 		return
 	}
 	// Prevent concurrent reads/write if clear is called during execution
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Avoid double clear in the event Refresh() is called concurrently
-	if c.cleared {
+	if c.cleared.Load() {
 		return
 	}
 
@@ -263,13 +279,13 @@ func (c *CachingFactory) Clear() {
 		}
 	}
 
-	c.refreshed = false
-	c.cleared = true
+	c.refreshed.Store(false)
+	c.cleared.Store(true)
 }
 
 func (c *CachingFactory) createCloudwatchClient(regionConfig *aws.Config) *cloudwatch.Client {
 	return cloudwatch.NewFromConfig(*regionConfig, func(options *cloudwatch.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -290,7 +306,7 @@ func (c *CachingFactory) createCloudwatchClient(regionConfig *aws.Config) *cloud
 
 func (c *CachingFactory) createTaggingClient(regionConfig *aws.Config) *resourcegroupstaggingapi.Client {
 	return resourcegroupstaggingapi.NewFromConfig(*regionConfig, func(options *resourcegroupstaggingapi.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -304,7 +320,7 @@ func (c *CachingFactory) createTaggingClient(regionConfig *aws.Config) *resource
 
 func (c *CachingFactory) createAutoScalingClient(assumedConfig *aws.Config) *autoscaling.Client {
 	return autoscaling.NewFromConfig(*assumedConfig, func(options *autoscaling.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -320,7 +336,7 @@ func (c *CachingFactory) createAutoScalingClient(assumedConfig *aws.Config) *aut
 
 func (c *CachingFactory) createAPIGatewayClient(assumedConfig *aws.Config) *apigateway.Client {
 	return apigateway.NewFromConfig(*assumedConfig, func(options *apigateway.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -334,7 +350,7 @@ func (c *CachingFactory) createAPIGatewayClient(assumedConfig *aws.Config) *apig
 
 func (c *CachingFactory) createAPIGatewayV2Client(assumedConfig *aws.Config) *apigatewayv2.Client {
 	return apigatewayv2.NewFromConfig(*assumedConfig, func(options *apigatewayv2.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -348,7 +364,7 @@ func (c *CachingFactory) createAPIGatewayV2Client(assumedConfig *aws.Config) *ap
 
 func (c *CachingFactory) createEC2Client(assumedConfig *aws.Config) *ec2.Client {
 	return ec2.NewFromConfig(*assumedConfig, func(options *ec2.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -362,7 +378,7 @@ func (c *CachingFactory) createEC2Client(assumedConfig *aws.Config) *ec2.Client 
 
 func (c *CachingFactory) createDMSClient(assumedConfig *aws.Config) *databasemigrationservice.Client {
 	return databasemigrationservice.NewFromConfig(*assumedConfig, func(options *databasemigrationservice.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -376,7 +392,7 @@ func (c *CachingFactory) createDMSClient(assumedConfig *aws.Config) *databasemig
 
 func (c *CachingFactory) createStorageGatewayClient(assumedConfig *aws.Config) *storagegateway.Client {
 	return storagegateway.NewFromConfig(*assumedConfig, func(options *storagegateway.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -390,7 +406,7 @@ func (c *CachingFactory) createStorageGatewayClient(assumedConfig *aws.Config) *
 
 func (c *CachingFactory) createPrometheusClient(assumedConfig *aws.Config) *amp.Client {
 	return amp.NewFromConfig(*assumedConfig, func(options *amp.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {
@@ -412,7 +428,7 @@ func (c *CachingFactory) createIAMClient(awsConfig *aws.Config) *iam.Client {
 
 func (c *CachingFactory) createShieldClient(awsConfig *aws.Config) *shield.Client {
 	return shield.NewFromConfig(*awsConfig, func(options *shield.Options) {
-		if c.logger.IsDebugEnabled() {
+		if c.logger != nil && c.logger.Enabled(context.Background(), slog.LevelDebug) {
 			options.ClientLogMode = aws.LogRequestWithBody | aws.LogResponseWithBody
 		}
 		if c.endpointURLOverride != "" {

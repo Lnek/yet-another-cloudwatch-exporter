@@ -1,27 +1,39 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package job
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/job/cloudwatchrunner"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/job/cloudwatchrunner"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/account"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/account"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 type Scraper struct {
 	jobsCfg       model.JobsConfig
-	logger        logging.Logger
+	logger        *slog.Logger
 	runnerFactory runnerFactory
 }
 
 type runnerFactory interface {
 	GetAccountClient(region string, role model.Role) account.Client
-	NewResourceMetadataRunner(logger logging.Logger, region string, role model.Role) ResourceMetadataRunner
-	NewCloudWatchRunner(logger logging.Logger, region string, role model.Role, job cloudwatchrunner.Job) CloudwatchRunner
+	NewResourceMetadataRunner(logger *slog.Logger, region string, role model.Role) ResourceMetadataRunner
+	NewCloudWatchRunner(logger *slog.Logger, region string, role model.Role, job cloudwatchrunner.Job) CloudwatchRunner
 }
 
 type ResourceMetadataRunner interface {
@@ -32,7 +44,7 @@ type CloudwatchRunner interface {
 	Run(ctx context.Context) ([]*model.CloudwatchData, error)
 }
 
-func NewScraper(logger logging.Logger,
+func NewScraper(logger *slog.Logger,
 	jobsCfg model.JobsConfig,
 	runnerFactory runnerFactory,
 ) *Scraper {
@@ -96,7 +108,7 @@ func (s Scraper) Scrape(ctx context.Context) ([]model.TaggedResourceResult, []mo
 
 			var namespace string
 			jobAction(s.logger, job, func(job model.DiscoveryJob) {
-				namespace = job.Type
+				namespace = job.Namespace
 			}, func(job model.CustomNamespaceJob) {
 				namespace = job.Namespace
 			})
@@ -209,7 +221,7 @@ func jobConfigVisitor(jobsCfg model.JobsConfig, action func(job any, role model.
 }
 
 // Take an action depending on the job type, only supports discovery and custom job types
-func jobAction(logger logging.Logger, job any, discovery func(job model.DiscoveryJob), custom func(job model.CustomNamespaceJob)) {
+func jobAction(logger *slog.Logger, job any, discovery func(job model.DiscoveryJob), custom func(job model.CustomNamespaceJob)) {
 	// Type switches are free https://stackoverflow.com/a/28027945
 	switch typedJob := job.(type) {
 	case model.DiscoveryJob:
@@ -217,7 +229,7 @@ func jobAction(logger logging.Logger, job any, discovery func(job model.Discover
 	case model.CustomNamespaceJob:
 		custom(typedJob)
 	default:
-		logger.Error(fmt.Errorf("config type of %T is not supported", typedJob), "Unexpected job type")
+		logger.Error("Unexpected job type", "err", fmt.Errorf("config type of %T is not supported", typedJob))
 		return
 	}
 }

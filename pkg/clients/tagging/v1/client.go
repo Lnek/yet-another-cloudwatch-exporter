@@ -1,8 +1,21 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package v1
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/apigateway/apigatewayiface"
@@ -16,15 +29,14 @@ import (
 	"github.com/aws/aws-sdk-go/service/shield/shieldiface"
 	"github.com/aws/aws-sdk-go/service/storagegateway/storagegatewayiface"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/tagging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/config"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/promutil"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/tagging"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/config"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/promutil"
 )
 
 type client struct {
-	logger            logging.Logger
+	logger            *slog.Logger
 	taggingAPI        resourcegroupstaggingapiiface.ResourceGroupsTaggingAPIAPI
 	autoscalingAPI    autoscalingiface.AutoScalingAPI
 	apiGatewayAPI     apigatewayiface.APIGatewayAPI
@@ -37,7 +49,7 @@ type client struct {
 }
 
 func NewClient(
-	logger logging.Logger,
+	logger *slog.Logger,
 	taggingAPI resourcegroupstaggingapiiface.ResourceGroupsTaggingAPIAPI,
 	autoscalingAPI autoscalingiface.AutoScalingAPI,
 	apiGatewayAPI apigatewayiface.APIGatewayAPI,
@@ -63,7 +75,7 @@ func NewClient(
 }
 
 func (c client) GetResources(ctx context.Context, job model.DiscoveryJob, region string) ([]*model.TaggedResource, error) {
-	svc := config.SupportedServices.GetService(job.Type)
+	svc := config.SupportedServices.GetService(job.Namespace)
 	var resources []*model.TaggedResource
 	shouldHaveDiscoveredResources := false
 
@@ -100,7 +112,7 @@ func (c client) GetResources(ctx context.Context, job model.DiscoveryJob, region
 			for _, resourceTagMapping := range page.ResourceTagMappingList {
 				resource := model.TaggedResource{
 					ARN:       aws.StringValue(resourceTagMapping.ResourceARN),
-					Namespace: job.Type,
+					Namespace: job.Namespace,
 					Region:    region,
 					Tags:      make([]model.Tag, 0, len(resourceTagMapping.Tags)),
 				}

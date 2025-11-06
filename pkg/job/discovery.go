@@ -1,18 +1,30 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package job
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/tagging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/config"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/job/maxdimassociator"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/tagging"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/config"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/job/maxdimassociator"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 type resourceAssociator interface {
@@ -25,7 +37,7 @@ type getMetricDataProcessor interface {
 
 func runDiscoveryJob(
 	ctx context.Context,
-	logger logging.Logger,
+	logger *slog.Logger,
 	job model.DiscoveryJob,
 	region string,
 	clientTag tagging.Client,
@@ -37,18 +49,18 @@ func runDiscoveryJob(
 	resources, err := clientTag.GetResources(ctx, job, region)
 	if err != nil {
 		if errors.Is(err, tagging.ErrExpectedToFindResources) {
-			logger.Error(err, "No tagged resources made it through filtering")
+			logger.Error("No tagged resources made it through filtering", "err", err)
 		} else {
-			logger.Error(err, "Couldn't describe resources")
+			logger.Error("Couldn't describe resources", "err", err)
 		}
 		return nil, nil
 	}
 
 	if len(resources) == 0 {
-		logger.Debug("No tagged resources", "region", region, "namespace", job.Type)
+		logger.Debug("No tagged resources", "region", region, "namespace", job.Namespace)
 	}
 
-	svc := config.SupportedServices.GetService(job.Type)
+	svc := config.SupportedServices.GetService(job.Namespace)
 	getMetricDatas := getMetricDataForQueries(ctx, logger, job, svc, clientCloudwatch, resources)
 	if len(getMetricDatas) == 0 {
 		logger.Info("No metrics data found")
@@ -57,7 +69,7 @@ func runDiscoveryJob(
 
 	getMetricDatas, err = gmdProcessor.Run(ctx, svc.Namespace, getMetricDatas)
 	if err != nil {
-		logger.Error(err, "Failed to get metric data")
+		logger.Error("Failed to get metric data", "err", err)
 		return nil, nil
 	}
 
@@ -66,7 +78,7 @@ func runDiscoveryJob(
 
 func getMetricDataForQueries(
 	ctx context.Context,
-	logger logging.Logger,
+	logger *slog.Logger,
 	discoveryJob model.DiscoveryJob,
 	svc *config.ServiceConfig,
 	clientCloudwatch cloudwatch.Client,
@@ -94,14 +106,14 @@ func getMetricDataForQueries(
 			defer wg.Done()
 
 			err := clientCloudwatch.ListMetrics(ctx, svc.Namespace, metric, discoveryJob.RecentlyActiveOnly, func(page []*model.Metric) {
-				data := getFilteredMetricDatas(logger, discoveryJob.Type, discoveryJob.ExportedTagsOnMetrics, page, discoveryJob.DimensionNameRequirements, metric, assoc)
+				data := getFilteredMetricDatas(logger, discoveryJob.Namespace, discoveryJob.ExportedTagsOnMetrics, page, discoveryJob.DimensionNameRequirements, metric, assoc)
 
 				mux.Lock()
 				getMetricDatas = append(getMetricDatas, data...)
 				mux.Unlock()
 			})
 			if err != nil {
-				logger.Error(err, "Failed to get full metric list", "metric_name", metric.Name, "namespace", svc.Namespace)
+				logger.Error("Failed to get full metric list", "metric_name", metric.Name, "namespace", svc.Namespace, "err", err)
 				return
 			}
 		}(metric)
@@ -118,7 +130,7 @@ func (ns nopAssociator) AssociateMetricToResource(_ *model.Metric) (*model.Tagge
 }
 
 func getFilteredMetricDatas(
-	logger logging.Logger,
+	logger *slog.Logger,
 	namespace string,
 	tagsOnMetrics []string,
 	metricsList []*model.Metric,
@@ -134,13 +146,12 @@ func getFilteredMetricDatas(
 
 		matchedResource, skip := assoc.AssociateMetricToResource(cwMetric)
 		if skip {
-			if logger.IsDebugEnabled() {
-				dimensions := make([]string, 0, len(cwMetric.Dimensions))
-				for _, dim := range cwMetric.Dimensions {
-					dimensions = append(dimensions, fmt.Sprintf("%s=%s", dim.Name, dim.Value))
-				}
-				logger.Debug("skipping metric unmatched by associator", "metric", m.Name, "dimensions", strings.Join(dimensions, ","))
+			dimensions := make([]string, 0, len(cwMetric.Dimensions))
+			for _, dim := range cwMetric.Dimensions {
+				dimensions = append(dimensions, fmt.Sprintf("%s=%s", dim.Name, dim.Value))
 			}
+			logger.Debug("skipping metric unmatched by associator", "metric", m.Name, "dimensions", strings.Join(dimensions, ","))
+
 			continue
 		}
 
@@ -168,6 +179,7 @@ func getFilteredMetricDatas(
 				MetricMigrationParams: model.MetricMigrationParams{
 					NilToZero:              m.NilToZero,
 					AddCloudwatchTimestamp: m.AddCloudwatchTimestamp,
+					ExportAllDataPoints:    m.ExportAllDataPoints,
 				},
 				Tags:                      metricTags,
 				GetMetricDataResult:       nil,

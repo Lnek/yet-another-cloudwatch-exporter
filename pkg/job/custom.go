@@ -1,17 +1,29 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package job
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 func runCustomNamespaceJob(
 	ctx context.Context,
-	logger logging.Logger,
+	logger *slog.Logger,
 	job model.CustomNamespaceJob,
 	clientCloudwatch cloudwatch.Client,
 	gmdProcessor getMetricDataProcessor,
@@ -25,7 +37,7 @@ func runCustomNamespaceJob(
 	var err error
 	cloudwatchDatas, err = gmdProcessor.Run(ctx, job.Namespace, cloudwatchDatas)
 	if err != nil {
-		logger.Error(err, "Failed to get metric data")
+		logger.Error("Failed to get metric data", "err", err)
 		return nil
 	}
 
@@ -36,7 +48,7 @@ func getMetricDataForQueriesForCustomNamespace(
 	ctx context.Context,
 	customNamespaceJob model.CustomNamespaceJob,
 	clientCloudwatch cloudwatch.Client,
-	logger logging.Logger,
+	logger *slog.Logger,
 ) []*model.CloudwatchData {
 	mux := &sync.Mutex{}
 	var getMetricDatas []*model.CloudwatchData
@@ -74,6 +86,7 @@ func getMetricDataForQueriesForCustomNamespace(
 							MetricMigrationParams: model.MetricMigrationParams{
 								NilToZero:              metric.NilToZero,
 								AddCloudwatchTimestamp: metric.AddCloudwatchTimestamp,
+								ExportAllDataPoints:    metric.ExportAllDataPoints,
 							},
 							Tags:                      nil,
 							GetMetricDataResult:       nil,
@@ -87,7 +100,7 @@ func getMetricDataForQueriesForCustomNamespace(
 				mux.Unlock()
 			})
 			if err != nil {
-				logger.Error(err, "Failed to get full metric list", "metric_name", metric.Name, "namespace", customNamespaceJob.Namespace)
+				logger.Error("Failed to get full metric list", "metric_name", metric.Name, "namespace", customNamespaceJob.Namespace, "err", err)
 				return
 			}
 		}(metric)

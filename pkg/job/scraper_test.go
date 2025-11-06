@@ -1,21 +1,34 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package job_test
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/prometheus/common/promslog"
 	"github.com/r3labs/diff/v3"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/account"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/job"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/job/cloudwatchrunner"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/account"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/job"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/job/cloudwatchrunner"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 type testRunnerFactory struct {
@@ -41,11 +54,11 @@ func (t *testRunnerFactory) GetAccountClient(string, model.Role) account.Client 
 	return t
 }
 
-func (t *testRunnerFactory) NewResourceMetadataRunner(logging.Logger, string, model.Role) job.ResourceMetadataRunner {
+func (t *testRunnerFactory) NewResourceMetadataRunner(*slog.Logger, string, model.Role) job.ResourceMetadataRunner {
 	return &testMetadataRunner{RunFunc: t.MetadataRunFunc}
 }
 
-func (t *testRunnerFactory) NewCloudWatchRunner(_ logging.Logger, _ string, _ model.Role, job cloudwatchrunner.Job) job.CloudwatchRunner {
+func (t *testRunnerFactory) NewCloudWatchRunner(_ *slog.Logger, _ string, _ model.Role, job cloudwatchrunner.Job) job.CloudwatchRunner {
 	return &testCloudwatchRunner{Job: job, RunFunc: t.CloudwatchRunFunc}
 }
 
@@ -83,8 +96,8 @@ func TestScrapeRunner_Run(t *testing.T) {
 			jobsCfg: model.JobsConfig{
 				DiscoveryJobs: []model.DiscoveryJob{
 					{
-						Regions: []string{"us-east-1"},
-						Type:    "aws-namespace",
+						Regions:   []string{"us-east-1"},
+						Namespace: "aws-namespace",
 						Roles: []model.Role{
 							{RoleArn: "aws-arn-1", ExternalID: "external-id-1"},
 						},
@@ -110,7 +123,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 						Namespace:           "aws-namespace",
 						Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 						Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 					},
 				}, nil
 			},
@@ -132,7 +145,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							Namespace:           "aws-namespace",
 							Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 							Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 						},
 					},
 				},
@@ -165,7 +178,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 						ResourceName:        "resource-2",
 						Namespace:           "custom-namespace",
 						Dimensions:          []model.Dimension{{Name: "dimension2", Value: "value2"}},
-						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", Datapoint: aws.Float64(2.0), Timestamp: time.Time{}},
+						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", DataPoints: []model.DataPoint{{Value: aws.Float64(2.0), Timestamp: time.Time{}}}},
 					},
 				}, nil
 			},
@@ -178,7 +191,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							ResourceName:        "resource-2",
 							Namespace:           "custom-namespace",
 							Dimensions:          []model.Dimension{{Name: "dimension2", Value: "value2"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", Datapoint: aws.Float64(2.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", DataPoints: []model.DataPoint{{Value: aws.Float64(2.0), Timestamp: time.Time{}}}},
 						},
 					},
 				},
@@ -189,8 +202,8 @@ func TestScrapeRunner_Run(t *testing.T) {
 			jobsCfg: model.JobsConfig{
 				DiscoveryJobs: []model.DiscoveryJob{
 					{
-						Regions: []string{"us-east-1"},
-						Type:    "aws-namespace",
+						Regions:   []string{"us-east-1"},
+						Namespace: "aws-namespace",
 						Roles: []model.Role{
 							{RoleArn: "aws-arn-1", ExternalID: "external-id-1"},
 						},
@@ -226,7 +239,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							ResourceName:        "resource-2",
 							Namespace:           "custom-namespace",
 							Dimensions:          []model.Dimension{{Name: "dimension2", Value: "value2"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", Datapoint: aws.Float64(2.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", DataPoints: []model.DataPoint{{Value: aws.Float64(2.0), Timestamp: time.Time{}}}},
 						},
 					}, nil
 				}
@@ -237,7 +250,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 						Namespace:           "aws-namespace",
 						Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 						Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 					},
 				}, nil
 			},
@@ -259,7 +272,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							Namespace:           "aws-namespace",
 							Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 							Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 						},
 					},
 				},
@@ -271,7 +284,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							ResourceName:        "resource-2",
 							Namespace:           "custom-namespace",
 							Dimensions:          []model.Dimension{{Name: "dimension2", Value: "value2"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", Datapoint: aws.Float64(2.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", DataPoints: []model.DataPoint{{Value: aws.Float64(2.0), Timestamp: time.Time{}}}},
 						},
 					},
 				},
@@ -282,8 +295,8 @@ func TestScrapeRunner_Run(t *testing.T) {
 			jobsCfg: model.JobsConfig{
 				DiscoveryJobs: []model.DiscoveryJob{
 					{
-						Regions: []string{"us-east-1"},
-						Type:    "aws-namespace",
+						Regions:   []string{"us-east-1"},
+						Namespace: "aws-namespace",
 						Roles: []model.Role{
 							{RoleArn: "aws-arn-1", ExternalID: "external-id-1"},
 						},
@@ -313,8 +326,8 @@ func TestScrapeRunner_Run(t *testing.T) {
 			jobsCfg: model.JobsConfig{
 				DiscoveryJobs: []model.DiscoveryJob{
 					{
-						Regions: []string{"us-east-1"},
-						Type:    "aws-namespace",
+						Regions:   []string{"us-east-1"},
+						Namespace: "aws-namespace",
 						Roles: []model.Role{
 							{RoleArn: "aws-arn-1", ExternalID: "external-id-1"},
 						},
@@ -338,7 +351,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 						Namespace:           "aws-namespace",
 						Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 						Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 					},
 				}, nil
 			},
@@ -360,7 +373,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							Namespace:           "aws-namespace",
 							Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 							Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 						},
 					},
 				},
@@ -371,8 +384,8 @@ func TestScrapeRunner_Run(t *testing.T) {
 			jobsCfg: model.JobsConfig{
 				DiscoveryJobs: []model.DiscoveryJob{
 					{
-						Regions: []string{"us-east-1"},
-						Type:    "aws-namespace",
+						Regions:   []string{"us-east-1"},
+						Namespace: "aws-namespace",
 						Roles: []model.Role{
 							{RoleArn: "aws-arn-1", ExternalID: "external-id-1"},
 						},
@@ -405,7 +418,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 						ResourceName:        "resource-2",
 						Namespace:           "custom-namespace",
 						Dimensions:          []model.Dimension{{Name: "dimension2", Value: "value2"}},
-						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", Datapoint: aws.Float64(2.0), Timestamp: time.Time{}},
+						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", DataPoints: []model.DataPoint{{Value: aws.Float64(2.0), Timestamp: time.Time{}}}},
 					},
 				}, nil
 			},
@@ -418,7 +431,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							ResourceName:        "resource-2",
 							Namespace:           "custom-namespace",
 							Dimensions:          []model.Dimension{{Name: "dimension2", Value: "value2"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", Datapoint: aws.Float64(2.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Minimum", DataPoints: []model.DataPoint{{Value: aws.Float64(2.0), Timestamp: time.Time{}}}},
 						},
 					},
 				},
@@ -440,8 +453,8 @@ func TestScrapeRunner_Run(t *testing.T) {
 			jobsCfg: model.JobsConfig{
 				DiscoveryJobs: []model.DiscoveryJob{
 					{
-						Regions: []string{"us-east-1"},
-						Type:    "aws-namespace",
+						Regions:   []string{"us-east-1"},
+						Namespace: "aws-namespace",
 						Roles: []model.Role{
 							{RoleArn: "aws-arn-1", ExternalID: "external-id-1"},
 						},
@@ -480,7 +493,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 						Namespace:           "aws-namespace",
 						Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 						Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+						GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 					},
 				}, nil
 			},
@@ -502,7 +515,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 							Namespace:           "aws-namespace",
 							Tags:                []model.Tag{{Key: "tag1", Value: "value1"}},
 							Dimensions:          []model.Dimension{{Name: "dimension1", Value: "value1"}},
-							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", Datapoint: aws.Float64(1.0), Timestamp: time.Time{}},
+							GetMetricDataResult: &model.GetMetricDataResult{Statistic: "Maximum", DataPoints: []model.DataPoint{{Value: aws.Float64(1.0), Timestamp: time.Time{}}}},
 						},
 					},
 				},
@@ -528,7 +541,9 @@ func TestScrapeRunner_Run(t *testing.T) {
 				MetadataRunFunc:     tc.metadataRunFunc,
 				CloudwatchRunFunc:   tc.cloudwatchRunFunc,
 			}
-			sr := job.NewScraper(logging.NewLogger("", true), tc.jobsCfg, &rf)
+			lvl := promslog.NewLevel()
+			_ = lvl.Set("debug")
+			sr := job.NewScraper(promslog.New(&promslog.Config{Level: lvl}), tc.jobsCfg, &rf)
 			resources, metrics, errs := sr.Scrape(context.Background())
 
 			changelog, err := diff.Diff(tc.expectedResources, resources)
@@ -541,7 +556,7 @@ func TestScrapeRunner_Run(t *testing.T) {
 
 			// We don't want to check the exact error just the message
 			changelog, err = diff.Diff(tc.expectedErrs, errs, diff.Filter(func(_ []string, _ reflect.Type, field reflect.StructField) bool {
-				return !(field.Name == "Err")
+				return field.Name != "Err"
 			}))
 			assert.NoError(t, err, "failed to diff errs")
 			assert.Len(t, changelog, 0, changelog)

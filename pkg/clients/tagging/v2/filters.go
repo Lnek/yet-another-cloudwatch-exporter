@@ -1,3 +1,15 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package v2
 
 import (
@@ -16,8 +28,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/storagegateway"
 	"github.com/aws/aws-sdk-go/aws"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/promutil"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/promutil"
 )
 
 type ServiceFilter struct {
@@ -104,7 +116,7 @@ var ServiceFilters = map[string]ServiceFilter{
 				for _, asg := range page.AutoScalingGroups {
 					resource := model.TaggedResource{
 						ARN:       *asg.AutoScalingGroupARN,
-						Namespace: job.Type,
+						Namespace: job.Namespace,
 						Region:    region,
 					}
 
@@ -197,7 +209,7 @@ var ServiceFilters = map[string]ServiceFilter{
 				for _, ec2Spot := range page.SpotFleetRequestConfigs {
 					resource := model.TaggedResource{
 						ARN:       *ec2Spot.SpotFleetRequestId,
-						Namespace: job.Type,
+						Namespace: job.Namespace,
 						Region:    region,
 					}
 
@@ -232,7 +244,7 @@ var ServiceFilters = map[string]ServiceFilter{
 				for _, ws := range page.Workspaces {
 					resource := model.TaggedResource{
 						ARN:       *ws.Arn,
-						Namespace: job.Type,
+						Namespace: job.Namespace,
 						Region:    region,
 					}
 
@@ -267,7 +279,7 @@ var ServiceFilters = map[string]ServiceFilter{
 				for _, gwa := range page.Gateways {
 					resource := model.TaggedResource{
 						ARN:       fmt.Sprintf("%s/%s", *gwa.GatewayId, *gwa.GatewayName),
-						Namespace: job.Type,
+						Namespace: job.Namespace,
 						Region:    region,
 					}
 
@@ -308,7 +320,7 @@ var ServiceFilters = map[string]ServiceFilter{
 				for _, tgwa := range page.TransitGatewayAttachments {
 					resource := model.TaggedResource{
 						ARN:       fmt.Sprintf("%s/%s", *tgwa.TransitGatewayId, *tgwa.TransitGatewayAttachmentId),
-						Namespace: job.Type,
+						Namespace: job.Namespace,
 						Region:    region,
 					}
 
@@ -367,7 +379,7 @@ var ServiceFilters = map[string]ServiceFilter{
 					if protectedResource.Region == region || (protectedResource.Region == "" && region == "us-east-1") {
 						taggedResource := &model.TaggedResource{
 							ARN:       protectedResourceArn,
-							Namespace: job.Type,
+							Namespace: job.Namespace,
 							Region:    region,
 							Tags:      []model.Tag{{Key: "ProtectionArn", Value: protectionArn}},
 						}

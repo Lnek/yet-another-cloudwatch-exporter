@@ -1,7 +1,20 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -9,13 +22,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	exporter "github.com/nerdswords/yet-another-cloudwatch-exporter/pkg"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	exporter "github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
-type scraper struct {
+type Scraper struct {
 	registry     atomic.Pointer[prometheus.Registry]
 	featureFlags []string
 }
@@ -26,8 +38,8 @@ type cachingFactory interface {
 	Clear()
 }
 
-func NewScraper(featureFlags []string) *scraper { //nolint:revive
-	s := &scraper{
+func NewScraper(featureFlags []string) *Scraper {
+	s := &Scraper{
 		registry:     atomic.Pointer[prometheus.Registry]{},
 		featureFlags: featureFlags,
 	}
@@ -35,7 +47,7 @@ func NewScraper(featureFlags []string) *scraper { //nolint:revive
 	return s
 }
 
-func (s *scraper) makeHandler() func(http.ResponseWriter, *http.Request) {
+func (s *Scraper) makeHandler() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		handler := promhttp.HandlerFor(s.registry.Load(), promhttp.HandlerOpts{
 			DisableCompression: false,
@@ -44,7 +56,7 @@ func (s *scraper) makeHandler() func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func (s *scraper) decoupled(ctx context.Context, logger logging.Logger, jobsCfg model.JobsConfig, cache cachingFactory) {
+func (s *Scraper) decoupled(ctx context.Context, logger *slog.Logger, jobsCfg model.JobsConfig, cache cachingFactory) {
 	logger.Debug("Starting scraping async")
 	s.scrape(ctx, logger, jobsCfg, cache)
 
@@ -63,7 +75,7 @@ func (s *scraper) decoupled(ctx context.Context, logger logging.Logger, jobsCfg 
 	}
 }
 
-func (s *scraper) scrape(ctx context.Context, logger logging.Logger, jobsCfg model.JobsConfig, cache cachingFactory) {
+func (s *Scraper) scrape(ctx context.Context, logger *slog.Logger, jobsCfg model.JobsConfig, cache cachingFactory) {
 	if !sem.TryAcquire(1) {
 		// This shouldn't happen under normal use, users should adjust their configuration when this occurs.
 		// Let them know by logging a warning.
@@ -108,7 +120,7 @@ func (s *scraper) scrape(ctx context.Context, logger logging.Logger, jobsCfg mod
 		options...,
 	)
 	if err != nil {
-		logger.Error(err, "error updating metrics")
+		logger.Error("error updating metrics", "err", err)
 	}
 
 	s.registry.Store(newRegistry)

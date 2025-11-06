@@ -1,8 +1,21 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package promutil
 
 import (
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
@@ -88,6 +101,8 @@ var replacer = strings.NewReplacer(
 	"@", "_",
 	"<", "_",
 	">", "_",
+	"(", "_",
+	")", "_",
 	"%", "_percent",
 )
 
@@ -164,8 +179,29 @@ func toConstMetrics(metrics []*PrometheusMetric) []prometheus.Metric {
 }
 
 func PromString(text string) string {
-	text = splitString(text)
-	return strings.ToLower(sanitize(text))
+	var buf strings.Builder
+	PromStringToBuilder(text, &buf)
+	return buf.String()
+}
+
+func PromStringToBuilder(text string, buf *strings.Builder) {
+	buf.Grow(len(text))
+
+	var prev rune
+	for _, c := range text {
+		switch c {
+		case ' ', ',', '\t', '/', '\\', '.', '-', ':', '=', '@', '<', '>', '(', ')', '“':
+			buf.WriteRune('_')
+		case '%':
+			buf.WriteString("_percent")
+		default:
+			if unicode.IsUpper(c) && (unicode.IsLower(prev) || unicode.IsDigit(prev)) {
+				buf.WriteRune('_')
+			}
+			buf.WriteRune(unicode.ToLower(c))
+		}
+		prev = c
+	}
 }
 
 func PromStringTag(text string, labelsSnakeCase bool) (bool, string) {
@@ -175,7 +211,7 @@ func PromStringTag(text string, labelsSnakeCase bool) (bool, string) {
 	} else {
 		s = sanitize(text)
 	}
-	return model.LabelName(s).IsValid(), s
+	return model.LabelName(s).IsValid(), s //nolint:staticcheck
 }
 
 // sanitize replaces some invalid chars with an underscore
@@ -190,42 +226,9 @@ func sanitize(text string) string {
 	b := []byte(text)
 	for i := 0; i < len(b); i++ {
 		switch b[i] {
-		case ' ', ',', '\t', '/', '\\', '.', '-', ':', '=', '@', '<', '>':
+		case ' ', ',', '\t', '/', '\\', '.', '-', ':', '=', '@', '<', '>', '(', ')':
 			b[i] = '_'
 		}
 	}
 	return string(b)
-}
-
-// splitString replaces consecutive occurrences of a lowercase and uppercase letter,
-// or a number and an upper case letter, by putting a dot between the two chars.
-//
-// This is an optimised version of the original implementation:
-//
-//	  var splitRegexp = regexp.MustCompile(`([a-z0-9])([A-Z])`)
-//
-//		func splitString(text string) string {
-//		  return splitRegexp.ReplaceAllString(text, `$1.$2`)
-//		}
-func splitString(text string) string {
-	sb := strings.Builder{}
-	sb.Grow(len(text) + 4) // make some room for replacements
-
-	i := 0
-	for i < len(text) {
-		c := text[i]
-		sb.WriteByte(c)
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
-			if i < (len(text) - 1) {
-				c = text[i+1]
-				if c >= 'A' && c <= 'Z' {
-					sb.WriteByte('.')
-					sb.WriteByte(c)
-					i++
-				}
-			}
-		}
-		i++
-	}
-	return sb.String()
 }

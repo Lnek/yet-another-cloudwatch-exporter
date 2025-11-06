@@ -18,7 +18,7 @@ All flags may be prefixed with either one hypen or two (i.e., both `-config.file
 | `-listen-address` | Network address to listen to | `127.0.0.1:5000` |
 | `-config.file` | Path to the configuration file | `config.yml` |
 | `-log.format` | Output format of log messages. One of: [logfmt, json] | `json` |
-| `-debug` | Log at debug level | `false` |
+| `-log.level` | Log at selected level. One of: [debug, info, warn, error] | `info` |
 | `-fips` | Use FIPS compliant AWS API | `false` |
 | `-cloudwatch-concurrency` | Maximum number of concurrent requests to CloudWatch API | `5` |
 | `-cloudwatch-concurrency.per-api-limit-enabled` | Enables a concurrency limiter, that has a specific limit per CloudWatch API call. | `false` |
@@ -136,6 +136,14 @@ statistics:
 
 # Export the metric with the original CloudWatch timestamp (General Setting for all metrics in this job)
 [ addCloudwatchTimestamp: <boolean> ]
+
+# Enables the inclusion of past metric data points from the CloudWatch response if available.
+# This is useful when a metric is configured with a 60-second period and a 300-second duration, ensuring that all
+# five data points are exposed at the metrics endpoint instead of only the latest one.
+# Note: This option requires `addCloudwatchTimestamp` to be enabled.
+# The metric destination must support out of order timestamps, see https://prometheus.io/docs/prometheus/latest/configuration/configuration/#tsdb
+# (General Setting for all metrics in this job)
+[ exportAllDataPoints: <boolean> ]
 
 # List of metric definitions
 metrics:
@@ -276,6 +284,14 @@ statistics:
 # Export the metric with the original CloudWatch timestamp (General Setting for all metrics in this job)
 [ addCloudwatchTimestamp: <boolean> ]
 
+# Enables the inclusion of past metric data points from the CloudWatch response if available.
+# This is useful when a metric is configured with a 60-second period and a 300-second duration, ensuring that all
+# five data points are exposed at the metrics endpoint instead of only the latest one.
+# Note: This option requires `addCloudwatchTimestamp` to be enabled.
+# The metric destination must support out of order timestamps, see https://prometheus.io/docs/prometheus/latest/configuration/configuration/#tsdb
+# (General Setting for all metrics in this job)
+[ exportAllDataPoints: <boolean> ]
+
 # List of metric definitions
 metrics:
   [ - <metric_config> ... ]
@@ -333,12 +349,20 @@ statistics:
 
 # Export the metric with the original CloudWatch timestamp (Overrides job level setting)
 [ addCloudwatchTimestamp: <boolean> ]
+
+# Enables the inclusion of past metric data points from the CloudWatch response if available.
+# This is useful when a metric is configured with a 60-second period and a 300-second duration, ensuring that all
+# five data points are exposed at the metrics endpoint instead of only the latest one.
+# Note: This option requires `addCloudwatchTimestamp` to be enabled.
+# The metric destination must support out of order timestamps, see https://prometheus.io/docs/prometheus/latest/configuration/configuration/#tsdb
+# (General Setting for all metrics in this job)
+[ exportAllDataPoints: <boolean> ]
 ```
 
 Notes:
 - Available statistics: `Maximum`, `Minimum`, `Sum`, `SampleCount`, `Average`, `pXX` (e.g. `p90`).
 
-- Watch out using `addCloudwatchTimestamp` for sparse metrics, e.g from S3, since Prometheus won't scrape metrics containing timestamps older than 2-3 hours.
+- Watch out using `addCloudwatchTimestamp` for sparse metrics, e.g from S3, since Prometheus won't scrape metrics containing timestamps older than 2-3 hours. Also the same applies when enabling `exportAllDataPoints` in any metric.
 
 ### `exported_tags_config`
 

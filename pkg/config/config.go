@@ -1,16 +1,28 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package config
 
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/grafana/regexp"
 	"gopkg.in/yaml.v2"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 type ScrapeConf struct {
@@ -40,6 +52,7 @@ type JobLevelMetricFields struct {
 	Delay                  int64    `yaml:"delay"`
 	NilToZero              *bool    `yaml:"nilToZero"`
 	AddCloudwatchTimestamp *bool    `yaml:"addCloudwatchTimestamp"`
+	ExportAllDataPoints    *bool    `yaml:"exportAllDataPoints"`
 }
 
 type Job struct {
@@ -87,6 +100,7 @@ type Metric struct {
 	Delay                  int64    `yaml:"delay"`
 	NilToZero              *bool    `yaml:"nilToZero"`
 	AddCloudwatchTimestamp *bool    `yaml:"addCloudwatchTimestamp"`
+	ExportAllDataPoints    *bool    `yaml:"exportAllDataPoints"`
 }
 
 type Dimension struct {
@@ -107,7 +121,7 @@ func (r *Role) ValidateRole(roleIdx int, parent string) error {
 	return nil
 }
 
-func (c *ScrapeConf) Load(file string, logger logging.Logger) (model.JobsConfig, error) {
+func (c *ScrapeConf) Load(file string, logger *slog.Logger) (model.JobsConfig, error) {
 	yamlFile, err := os.ReadFile(file)
 	if err != nil {
 		return model.JobsConfig{}, err
@@ -140,9 +154,9 @@ func (c *ScrapeConf) Load(file string, logger logging.Logger) (model.JobsConfig,
 	return c.Validate(logger)
 }
 
-func (c *ScrapeConf) Validate(logger logging.Logger) (model.JobsConfig, error) {
+func (c *ScrapeConf) Validate(logger *slog.Logger) (model.JobsConfig, error) {
 	if c.Discovery.Jobs == nil && c.Static == nil && c.CustomNamespace == nil {
-		return model.JobsConfig{}, fmt.Errorf("At least 1 Discovery job, 1 Static or one CustomNamespace must be defined")
+		return model.JobsConfig{}, fmt.Errorf("at least 1 Discovery job, 1 Static or one CustomNamespace must be defined")
 	}
 
 	if c.Discovery.Jobs != nil {
@@ -200,7 +214,7 @@ func (c *ScrapeConf) Validate(logger logging.Logger) (model.JobsConfig, error) {
 	return c.toModelConfig(), nil
 }
 
-func (j *Job) validateDiscoveryJob(logger logging.Logger, jobIdx int) error {
+func (j *Job) validateDiscoveryJob(logger *slog.Logger, jobIdx int) error {
 	if j.Type != "" {
 		if svc := SupportedServices.GetService(j.Type); svc == nil {
 			if svc = SupportedServices.getServiceByAlias(j.Type); svc != nil {
@@ -247,7 +261,7 @@ func (j *Job) validateDiscoveryJob(logger logging.Logger, jobIdx int) error {
 	return nil
 }
 
-func (j *CustomNamespace) validateCustomNamespaceJob(logger logging.Logger, jobIdx int) error {
+func (j *CustomNamespace) validateCustomNamespaceJob(logger *slog.Logger, jobIdx int) error {
 	if j.Name == "" {
 		return fmt.Errorf("CustomNamespace job [%v]: Name should not be empty", jobIdx)
 	}
@@ -283,7 +297,7 @@ func (j *CustomNamespace) validateCustomNamespaceJob(logger logging.Logger, jobI
 	return nil
 }
 
-func (j *Static) validateStaticJob(logger logging.Logger, jobIdx int) error {
+func (j *Static) validateStaticJob(logger *slog.Logger, jobIdx int) error {
 	if j.Name == "" {
 		return fmt.Errorf("Static job [%v]: Name should not be empty", jobIdx)
 	}
@@ -313,7 +327,7 @@ func (j *Static) validateStaticJob(logger logging.Logger, jobIdx int) error {
 	return nil
 }
 
-func (m *Metric) validateMetric(logger logging.Logger, metricIdx int, parent string, discovery *JobLevelMetricFields) error {
+func (m *Metric) validateMetric(logger *slog.Logger, metricIdx int, parent string, discovery *JobLevelMetricFields) error {
 	if m.Name == "" {
 		return fmt.Errorf("Metric [%s/%d] in %v: Name should not be empty", m.Name, metricIdx, parent)
 	}
@@ -375,6 +389,19 @@ func (m *Metric) validateMetric(logger logging.Logger, metricIdx int, parent str
 		}
 	}
 
+	mExportAllDataPoints := m.ExportAllDataPoints
+	if mExportAllDataPoints == nil {
+		if discovery != nil && discovery.ExportAllDataPoints != nil {
+			mExportAllDataPoints = discovery.ExportAllDataPoints
+		} else {
+			mExportAllDataPoints = aws.Bool(false)
+		}
+	}
+
+	if aws.BoolValue(mExportAllDataPoints) && !aws.BoolValue(mAddCloudwatchTimestamp) {
+		return fmt.Errorf("Metric [%s/%d] in %v: ExportAllDataPoints can only be enabled if AddCloudwatchTimestamp is enabled", m.Name, metricIdx, parent)
+	}
+
 	if mLength < mPeriod {
 		return fmt.Errorf(
 			"Metric [%s/%d] in %v: length(%d) is smaller than period(%d). This can cause that the data requested is not ready and generate data gaps",
@@ -386,6 +413,7 @@ func (m *Metric) validateMetric(logger logging.Logger, metricIdx int, parent str
 	m.Delay = mDelay
 	m.NilToZero = mNilToZero
 	m.AddCloudwatchTimestamp = mAddCloudwatchTimestamp
+	m.ExportAllDataPoints = mExportAllDataPoints
 	m.Statistics = mStatistics
 
 	return nil
@@ -400,7 +428,7 @@ func (c *ScrapeConf) toModelConfig() model.JobsConfig {
 
 		job := model.DiscoveryJob{}
 		job.Regions = discoveryJob.Regions
-		job.Type = svc.Namespace
+		job.Namespace = svc.Namespace
 		job.DimensionNameRequirements = discoveryJob.DimensionNameRequirements
 		job.RecentlyActiveOnly = discoveryJob.RecentlyActiveOnly
 		job.RoundingPeriod = discoveryJob.RoundingPeriod
@@ -507,13 +535,14 @@ func toModelMetricConfig(metrics []*Metric) []*model.MetricConfig {
 			Delay:                  m.Delay,
 			NilToZero:              aws.BoolValue(m.NilToZero),
 			AddCloudwatchTimestamp: aws.BoolValue(m.AddCloudwatchTimestamp),
+			ExportAllDataPoints:    aws.BoolValue(m.ExportAllDataPoints),
 		})
 	}
 	return ret
 }
 
 // logConfigErrors logs as warning any config unmarshalling error.
-func logConfigErrors(cfg []byte, logger logging.Logger) {
+func logConfigErrors(cfg []byte, logger *slog.Logger) {
 	var sc ScrapeConf
 	var errMsgs []string
 	if err := yaml.UnmarshalStrict(cfg, &sc); err != nil {

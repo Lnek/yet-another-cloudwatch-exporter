@@ -1,3 +1,15 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package promutil
 
 import (
@@ -6,10 +18,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
 )
 
 func TestBuildNamespaceInfoMetrics(t *testing.T) {
@@ -266,7 +278,7 @@ func TestBuildNamespaceInfoMetrics(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			metrics, labels := BuildNamespaceInfoMetrics(tc.resources, tc.metrics, tc.observedMetricLabels, tc.labelsSnakeCase, logging.NewNopLogger())
+			metrics, labels := BuildNamespaceInfoMetrics(tc.resources, tc.metrics, tc.observedMetricLabels, tc.labelsSnakeCase, promslog.NewNopLogger())
 			require.Equal(t, tc.expectedMetrics, metrics)
 			require.Equal(t, tc.expectedLabels, labels)
 		})
@@ -275,6 +287,7 @@ func TestBuildNamespaceInfoMetrics(t *testing.T) {
 
 func TestBuildMetrics(t *testing.T) {
 	ts := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
+	nullTs := time.Time{}
 
 	type testCase struct {
 		name            string
@@ -303,9 +316,8 @@ func TestBuildMetrics(t *testing.T) {
 						},
 						Namespace: "AWS/ElastiCache",
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(1),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 						},
 						Dimensions: []model.Dimension{
 							{
@@ -329,9 +341,8 @@ func TestBuildMetrics(t *testing.T) {
 							},
 						},
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(2),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(2), Timestamp: ts}},
 						},
 						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 					},
@@ -349,9 +360,8 @@ func TestBuildMetrics(t *testing.T) {
 							},
 						},
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(3),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(3), Timestamp: ts}},
 						},
 						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 					},
@@ -369,9 +379,80 @@ func TestBuildMetrics(t *testing.T) {
 							},
 						},
 						GetMetricDataResult: &model.GetMetricDataResult{
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(4), Timestamp: ts}},
+						},
+						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+					},
+					{
+						MetricName: "NetworkPacketsIn",
+						MetricMigrationParams: model.MetricMigrationParams{
+							NilToZero:              true,
+							AddCloudwatchTimestamp: true,
+							ExportAllDataPoints:    true,
+						},
+						Namespace: "AWS/ElastiCache",
+						Dimensions: []model.Dimension{
+							{
+								Name:  "CacheClusterId",
+								Value: "redis-cluster",
+							},
+						},
+						GetMetricDataResult: &model.GetMetricDataResult{
 							Statistic: "Average",
-							Datapoint: aws.Float64(4),
-							Timestamp: ts,
+							DataPoints: []model.DataPoint{
+								{Value: aws.Float64(4), Timestamp: ts},
+								{Value: aws.Float64(5), Timestamp: ts.Add(-1 * time.Minute)},
+								{Value: aws.Float64(6), Timestamp: ts.Add(-2 * time.Minute)},
+							},
+						},
+						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+					},
+					{
+						MetricName: "NetworkPacketsOut",
+						MetricMigrationParams: model.MetricMigrationParams{
+							NilToZero:              true,
+							AddCloudwatchTimestamp: true,
+							ExportAllDataPoints:    true,
+						},
+						Namespace: "AWS/ElastiCache",
+						Dimensions: []model.Dimension{
+							{
+								Name:  "CacheClusterId",
+								Value: "redis-cluster",
+							},
+						},
+						GetMetricDataResult: &model.GetMetricDataResult{
+							Statistic: "Average",
+							DataPoints: []model.DataPoint{
+								{Value: nil, Timestamp: ts},
+								{Value: aws.Float64(5), Timestamp: ts.Add(-1 * time.Minute)},
+								{Value: aws.Float64(6), Timestamp: ts.Add(-2 * time.Minute)},
+							},
+						},
+						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+					},
+					{
+						MetricName: "NetworkMaxBytesIn",
+						MetricMigrationParams: model.MetricMigrationParams{
+							NilToZero:              true,
+							AddCloudwatchTimestamp: true,
+							ExportAllDataPoints:    false,
+						},
+						Namespace: "AWS/ElastiCache",
+						Dimensions: []model.Dimension{
+							{
+								Name:  "CacheClusterId",
+								Value: "redis-cluster",
+							},
+						},
+						GetMetricDataResult: &model.GetMetricDataResult{
+							Statistic: "Average",
+							DataPoints: []model.DataPoint{
+								{Value: nil, Timestamp: ts},
+								{Value: aws.Float64(5), Timestamp: ts.Add(-1 * time.Minute)},
+								{Value: aws.Float64(6), Timestamp: ts.Add(-2 * time.Minute)},
+							},
 						},
 						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 					},
@@ -382,7 +463,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_cpuutilization_average",
 					Value:     1,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":               "123456789012",
 						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -393,7 +474,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_freeable_memory_average",
 					Value:     2,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":               "123456789012",
 						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -404,7 +485,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_network_bytes_in_average",
 					Value:     3,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":               "123456789012",
 						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -416,6 +497,66 @@ func TestBuildMetrics(t *testing.T) {
 					Name:             "aws_elasticache_network_bytes_out_average",
 					Value:            4,
 					Timestamp:        ts,
+					IncludeTimestamp: true,
+					Labels: map[string]string{
+						"account_id":               "123456789012",
+						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+						"region":                   "us-east-1",
+						"dimension_CacheClusterId": "redis-cluster",
+					},
+				},
+				{
+					Name:             "aws_elasticache_network_packets_in_average",
+					Value:            4,
+					Timestamp:        ts,
+					IncludeTimestamp: true,
+					Labels: map[string]string{
+						"account_id":               "123456789012",
+						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+						"region":                   "us-east-1",
+						"dimension_CacheClusterId": "redis-cluster",
+					},
+				},
+				{
+					Name:             "aws_elasticache_network_packets_in_average",
+					Value:            5,
+					Timestamp:        ts.Add(-1 * time.Minute),
+					IncludeTimestamp: true,
+					Labels: map[string]string{
+						"account_id":               "123456789012",
+						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+						"region":                   "us-east-1",
+						"dimension_CacheClusterId": "redis-cluster",
+					},
+				},
+				{
+					Name:             "aws_elasticache_network_packets_in_average",
+					Value:            6,
+					Timestamp:        ts.Add(-2 * time.Minute),
+					IncludeTimestamp: true,
+					Labels: map[string]string{
+						"account_id":               "123456789012",
+						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+						"region":                   "us-east-1",
+						"dimension_CacheClusterId": "redis-cluster",
+					},
+				},
+				{
+					Name:             "aws_elasticache_network_packets_out_average",
+					Value:            5,
+					Timestamp:        ts.Add(-1 * time.Minute),
+					IncludeTimestamp: true,
+					Labels: map[string]string{
+						"account_id":               "123456789012",
+						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
+						"region":                   "us-east-1",
+						"dimension_CacheClusterId": "redis-cluster",
+					},
+				},
+				{
+					Name:             "aws_elasticache_network_packets_out_average",
+					Value:            6,
+					Timestamp:        ts.Add(-2 * time.Minute),
 					IncludeTimestamp: true,
 					Labels: map[string]string{
 						"account_id":               "123456789012",
@@ -450,6 +591,18 @@ func TestBuildMetrics(t *testing.T) {
 					"region":                   {},
 					"dimension_CacheClusterId": {},
 				},
+				"aws_elasticache_network_packets_in_average": {
+					"account_id":               {},
+					"name":                     {},
+					"region":                   {},
+					"dimension_CacheClusterId": {},
+				},
+				"aws_elasticache_network_packets_out_average": {
+					"account_id":               {},
+					"name":                     {},
+					"region":                   {},
+					"dimension_CacheClusterId": {},
+				},
 			},
 			expectedErr: nil,
 		},
@@ -476,9 +629,8 @@ func TestBuildMetrics(t *testing.T) {
 							},
 						},
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: nil,
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: nil, Timestamp: ts}},
 						},
 						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 					},
@@ -497,9 +649,8 @@ func TestBuildMetrics(t *testing.T) {
 							},
 						},
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: nil,
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: nil, Timestamp: ts}},
 						},
 						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 					},
@@ -517,9 +668,8 @@ func TestBuildMetrics(t *testing.T) {
 							},
 						},
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: nil,
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: nil, Timestamp: ts}},
 						},
 						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 					},
@@ -537,9 +687,8 @@ func TestBuildMetrics(t *testing.T) {
 							},
 						},
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: nil,
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: nil, Timestamp: ts}},
 						},
 						ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 					},
@@ -550,7 +699,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_cpuutilization_average",
 					Value:     0,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":               "123456789012",
 						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -562,7 +711,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_freeable_memory_average",
 					Value:     math.NaN(),
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":               "123456789012",
 						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -574,7 +723,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_network_bytes_in_average",
 					Value:     0,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":               "123456789012",
 						"name":                     "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -623,9 +772,8 @@ func TestBuildMetrics(t *testing.T) {
 						},
 						Namespace: "AWS/ElastiCache",
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(1),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 						},
 						Dimensions: []model.Dimension{
 							{
@@ -642,7 +790,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_cpuutilization_average",
 					Value:     1,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":                 "123456789012",
 						"name":                       "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -678,9 +826,8 @@ func TestBuildMetrics(t *testing.T) {
 						},
 						Namespace: "/aws/sagemaker/TrainingJobs",
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(1),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 						},
 						Dimensions: []model.Dimension{
 							{
@@ -697,7 +844,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_sagemaker_trainingjobs_cpuutilization_average",
 					Value:     1,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":     "123456789012",
 						"name":           "arn:aws:sagemaker:us-east-1:123456789012:training-job/sagemaker-xgboost",
@@ -733,9 +880,8 @@ func TestBuildMetrics(t *testing.T) {
 						},
 						Namespace: "Glue",
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(1),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 						},
 						Dimensions: []model.Dimension{
 							{
@@ -752,7 +898,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_glue_driver_aggregate_bytes_read_average",
 					Value:     1,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":         "123456789012",
 						"name":               "arn:aws:glue:us-east-1:123456789012:job/test-job",
@@ -788,9 +934,8 @@ func TestBuildMetrics(t *testing.T) {
 						},
 						Namespace: "Glue",
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(1),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 						},
 						Dimensions: []model.Dimension{
 							{
@@ -807,7 +952,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_glue_aggregate_glue_jobs_bytes_read_average",
 					Value:     1,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":         "123456789012",
 						"name":               "arn:aws:glue:us-east-1:123456789012:job/test-job",
@@ -846,9 +991,8 @@ func TestBuildMetrics(t *testing.T) {
 						},
 						Namespace: "AWS/ElastiCache",
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(1),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 						},
 						Dimensions: []model.Dimension{
 							{
@@ -865,7 +1009,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_cpuutilization_average",
 					Value:     1,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":                 "123456789012",
 						"name":                       "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
@@ -903,9 +1047,8 @@ func TestBuildMetrics(t *testing.T) {
 						},
 						Namespace: "AWS/ElastiCache",
 						GetMetricDataResult: &model.GetMetricDataResult{
-							Statistic: "Average",
-							Datapoint: aws.Float64(1),
-							Timestamp: ts,
+							Statistic:  "Average",
+							DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 						},
 						Dimensions: []model.Dimension{
 							{
@@ -922,7 +1065,7 @@ func TestBuildMetrics(t *testing.T) {
 				{
 					Name:      "aws_elasticache_cpuutilization_average",
 					Value:     1,
-					Timestamp: ts,
+					Timestamp: nullTs,
 					Labels: map[string]string{
 						"account_id":                 "123456789012",
 						"account_alias":              "billingacct",
@@ -947,7 +1090,7 @@ func TestBuildMetrics(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, labels, err := BuildMetrics(tc.data, tc.labelsSnakeCase, logging.NewNopLogger())
+			res, labels, err := BuildMetrics(tc.data, tc.labelsSnakeCase, promslog.NewNopLogger())
 			if tc.expectedErr != nil {
 				require.Equal(t, tc.expectedErr, err)
 			} else {
@@ -977,9 +1120,8 @@ func Benchmark_BuildMetrics(b *testing.B) {
 				},
 				Namespace: "AWS/ElastiCache",
 				GetMetricDataResult: &model.GetMetricDataResult{
-					Statistic: "Average",
-					Datapoint: aws.Float64(1),
-					Timestamp: ts,
+					Statistic:  "Average",
+					DataPoints: []model.DataPoint{{Value: aws.Float64(1), Timestamp: ts}},
 				},
 				Dimensions: []model.Dimension{
 					{
@@ -1007,9 +1149,8 @@ func Benchmark_BuildMetrics(b *testing.B) {
 					},
 				},
 				GetMetricDataResult: &model.GetMetricDataResult{
-					Statistic: "Average",
-					Datapoint: aws.Float64(2),
-					Timestamp: ts,
+					Statistic:  "Average",
+					DataPoints: []model.DataPoint{{Value: aws.Float64(2), Timestamp: ts}},
 				},
 				ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 				Tags: []model.Tag{{
@@ -1031,9 +1172,8 @@ func Benchmark_BuildMetrics(b *testing.B) {
 					},
 				},
 				GetMetricDataResult: &model.GetMetricDataResult{
-					Statistic: "Average",
-					Datapoint: aws.Float64(3),
-					Timestamp: ts,
+					Statistic:  "Average",
+					DataPoints: []model.DataPoint{{Value: aws.Float64(3), Timestamp: ts}},
 				},
 				ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 				Tags: []model.Tag{{
@@ -1055,9 +1195,8 @@ func Benchmark_BuildMetrics(b *testing.B) {
 					},
 				},
 				GetMetricDataResult: &model.GetMetricDataResult{
-					Statistic: "Average",
-					Datapoint: aws.Float64(4),
-					Timestamp: ts,
+					Statistic:  "Average",
+					DataPoints: []model.DataPoint{{Value: aws.Float64(4), Timestamp: ts}},
 				},
 				ResourceName: "arn:aws:elasticache:us-east-1:123456789012:cluster:redis-cluster",
 				Tags: []model.Tag{{
@@ -1074,7 +1213,7 @@ func Benchmark_BuildMetrics(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, labels, err = BuildMetrics(data, false, logging.NewNopLogger())
+		_, labels, err = BuildMetrics(data, false, promslog.NewNopLogger())
 	}
 
 	expectedLabels := map[string]model.LabelSet{
@@ -1112,6 +1251,94 @@ func Benchmark_BuildMetrics(b *testing.B) {
 	require.Equal(b, expectedLabels, labels)
 }
 
+func TestBuildMetricName(t *testing.T) {
+	type testCase struct {
+		name      string
+		namespace string
+		metric    string
+		statistic string
+		expected  string
+	}
+
+	testCases := []testCase{
+		{
+			name:      "standard AWS namespace",
+			namespace: "AWS/ElastiCache",
+			metric:    "CPUUtilization",
+			statistic: "Average",
+			expected:  "aws_elasticache_cpuutilization_average",
+		},
+		{
+			name:      "nonstandard namespace with slashes",
+			namespace: "/aws/sagemaker/TrainingJobs",
+			metric:    "CPUUtilization",
+			statistic: "Average",
+			expected:  "aws_sagemaker_trainingjobs_cpuutilization_average",
+		},
+		{
+			name:      "metric name duplicating namespace",
+			namespace: "Glue",
+			metric:    "glue.driver.aggregate.bytesRead",
+			statistic: "Average",
+			expected:  "aws_glue_driver_aggregate_bytes_read_average",
+		},
+		{
+			name:      "metric name not duplicating namespace",
+			namespace: "Glue",
+			metric:    "aggregate.glue.jobs.bytesRead",
+			statistic: "Average",
+			expected:  "aws_glue_aggregate_glue_jobs_bytes_read_average",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := BuildMetricName(tc.namespace, tc.metric, tc.statistic)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func Benchmark_BuildMetricName(b *testing.B) {
+	testCases := []struct {
+		namespace string
+		metric    string
+		statistic string
+	}{
+		{
+			namespace: "AWS/ElastiCache",
+			metric:    "CPUUtilization",
+			statistic: "Average",
+		},
+		{
+			namespace: "/aws/sagemaker/TrainingJobs",
+			metric:    "CPUUtilization",
+			statistic: "Average",
+		},
+		{
+			namespace: "Glue",
+			metric:    "glue.driver.aggregate.bytesRead",
+			statistic: "Average",
+		},
+		{
+			namespace: "Glue",
+			metric:    "aggregate.glue.jobs.bytesRead",
+			statistic: "Average",
+		},
+	}
+
+	for _, tc := range testCases {
+		testName := BuildMetricName(tc.namespace, tc.metric, tc.statistic)
+		b.ResetTimer()
+		b.ReportAllocs()
+		b.Run(testName, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				BuildMetricName(tc.namespace, tc.metric, tc.statistic)
+			}
+		})
+	}
+}
+
 // replaceNaNValues replaces any NaN floating-point values with a marker value (54321.0)
 // so that require.Equal() can compare them. By default, require.Equal() will fail if any
 // struct values are NaN because NaN != NaN
@@ -1127,22 +1354,22 @@ func replaceNaNValues(metrics []*PrometheusMetric) []*PrometheusMetric {
 // TestSortByTimeStamp validates that sortByTimestamp() sorts in descending order.
 func TestSortByTimeStamp(t *testing.T) {
 	ts := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
-	dataPointMiddle := &model.Datapoint{
+	dataPointMiddle := &model.MetricStatisticsResult{
 		Timestamp: aws.Time(ts.Add(time.Minute * 2 * -1)),
 		Maximum:   aws.Float64(2),
 	}
 
-	dataPointNewest := &model.Datapoint{
+	dataPointNewest := &model.MetricStatisticsResult{
 		Timestamp: aws.Time(ts.Add(time.Minute * -1)),
 		Maximum:   aws.Float64(1),
 	}
 
-	dataPointOldest := &model.Datapoint{
+	dataPointOldest := &model.MetricStatisticsResult{
 		Timestamp: aws.Time(ts.Add(time.Minute * 3 * -1)),
 		Maximum:   aws.Float64(3),
 	}
 
-	cloudWatchDataPoints := []*model.Datapoint{
+	cloudWatchDataPoints := []*model.MetricStatisticsResult{
 		dataPointMiddle,
 		dataPointNewest,
 		dataPointOldest,
@@ -1150,7 +1377,7 @@ func TestSortByTimeStamp(t *testing.T) {
 
 	sortedDataPoints := sortByTimestamp(cloudWatchDataPoints)
 
-	expectedDataPoints := []*model.Datapoint{
+	expectedDataPoints := []*model.MetricStatisticsResult{
 		dataPointNewest,
 		dataPointMiddle,
 		dataPointOldest,

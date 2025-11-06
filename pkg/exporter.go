@@ -1,18 +1,31 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package exporter
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
+	prom "github.com/prometheus/common/model"
 
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/config"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/job"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/logging"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/model"
-	"github.com/nerdswords/yet-another-cloudwatch-exporter/pkg/promutil"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/clients/cloudwatch"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/config"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/job"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/model"
+	"github.com/prometheus-community/yet-another-cloudwatch-exporter/pkg/promutil"
 )
 
 // Metrics is a slice of prometheus metrics specific to the scraping process such API call counters
@@ -153,7 +166,7 @@ func defaultOptions() options {
 // Parameters are:
 // - `ctx`: a context for the request
 // - `config`: this is the struct representation of the configuration defined in top-level configuration
-// - `logger`: any implementation of the `logging.Logger` interface
+// - `logger`: an *slog.Logger
 // - `registry`: any prometheus compatible registry where scraped AWS metrics will be written
 // - `factory`: any implementation of the `clients.Factory` interface
 // - `optFuncs`: (optional) any number of options funcs
@@ -164,12 +177,15 @@ func defaultOptions() options {
 // track them over the lifetime of the application.
 func UpdateMetrics(
 	ctx context.Context,
-	logger logging.Logger,
+	logger *slog.Logger,
 	jobsCfg model.JobsConfig,
 	registry *prometheus.Registry,
 	factory clients.Factory,
 	optFuncs ...OptionsFunc,
 ) error {
+	// Use legacy validation as that's the behaviour of former releases.
+	prom.NameValidationScheme = prom.LegacyValidation //nolint:staticcheck
+
 	options := defaultOptions()
 	for _, f := range optFuncs {
 		if err := f(&options); err != nil {
@@ -192,7 +208,7 @@ func UpdateMetrics(
 
 	metrics, observedMetricLabels, err := promutil.BuildMetrics(cloudwatchData, options.labelsSnakeCase, logger)
 	if err != nil {
-		logger.Error(err, "Error migrating cloudwatch metrics to prometheus metrics")
+		logger.Error("Error migrating cloudwatch metrics to prometheus metrics", "err", err)
 		return nil
 	}
 	metrics, observedMetricLabels = promutil.BuildNamespaceInfoMetrics(tagsData, metrics, observedMetricLabels, options.labelsSnakeCase, logger)

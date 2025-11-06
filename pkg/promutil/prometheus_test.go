@@ -1,3 +1,15 @@
+// Copyright 2024 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package promutil
 
 import (
@@ -6,33 +18,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestSplitString(t *testing.T) {
-	testCases := []struct {
-		input  string
-		output string
-	}{
-		{
-			input:  "GlobalTopicCount",
-			output: "Global.Topic.Count",
-		},
-		{
-			input:  "CPUUtilization",
-			output: "CPUUtilization",
-		},
-		{
-			input:  "StatusCheckFailed_Instance",
-			output: "Status.Check.Failed_Instance",
-		},
-	}
-
-	for _, tc := range testCases {
-		assert.Equal(t, tc.output, splitString(tc.input))
-	}
-}
 
 func TestSanitize(t *testing.T) {
 	testCases := []struct {
@@ -59,6 +48,12 @@ func TestSanitize(t *testing.T) {
 }
 
 func TestPromStringTag(t *testing.T) {
+	originalValidationScheme := model.NameValidationScheme //nolint:staticcheck
+	model.NameValidationScheme = model.LegacyValidation    //nolint:staticcheck
+	defer func() {
+		model.NameValidationScheme = originalValidationScheme //nolint:staticcheck
+	}()
+
 	testCases := []struct {
 		name        string
 		label       string
@@ -122,6 +117,12 @@ func TestPromStringTag(t *testing.T) {
 }
 
 func TestNewPrometheusCollector_CanReportMetricsAndErrors(t *testing.T) {
+	originalValidationScheme := model.NameValidationScheme //nolint:staticcheck
+	model.NameValidationScheme = model.LegacyValidation    //nolint:staticcheck
+	defer func() {
+		model.NameValidationScheme = originalValidationScheme //nolint:staticcheck
+	}()
+
 	metrics := []*PrometheusMetric{
 		{
 			Name:             "this*is*not*valid",
